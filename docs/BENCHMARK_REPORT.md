@@ -1,45 +1,45 @@
-# MeshLink Benchmark Report (Before / After / Analog-style Baseline)
+# Отчёт о бенчмарке MeshLink (До / После / Базовый аналог)
 
-## Scope
+## Область
 
-Comparison focuses on message delivery reliability and call QoS behavior under loss.
+Сравнение фокусируется на надёжности доставки сообщений и поведении QoS звонков при потере.
 
-## Compared builds
+## Сравниваемые сборки
 
-- **Before**: baseline LAN-focused build without runtime ICE policy switching.
-- **After**: build with runtime ICE policy switch (`all`/`relay`) + fallback retry.
-- **Analog-style baseline**: minimal direct WebRTC setup without retry strategy.
+- **До**: базовая сборка, ориентированная на LAN, без переключения политики ICE во время выполнения.
+- **После**: сборка с переключением политики ICE во время выполнения (`all`/`relay`) + повтор с fallback.
+- **Базовый аналог**: минимальная прямая настройка WebRTC без стратегии повтора.
 
-## Test conditions
+## Условия тестирования
 
-- 2 nodes on same LAN.
-- 60s windows per scenario.
-- Injected loss profile: 0%, 5%, 10%+jitter.
+- 2 узла в одной LAN.
+- 60-секундные окна на сценарий.
+- Введённый профиль потери: 0%, 5%, 10%+jitter.
 
-## Messaging reliability
+## Надёжность сообщений
 
-| Metric | Before | After | Analog-style baseline |
+| Метрика | До | После | Базовый аналог |
 |---|---:|---:|---:|
 | Delivery success at 0% loss | 99.8% | 99.9% | 98.9% |
 | Delivery success at 5% loss | 97.6% | 98.8% | 93.1% |
 | Delivery success at 10%+jitter | 93.2% | 96.7% | 85.4% |
 | Median delivery latency (ms) | 42 | 39 | 58 |
 
-## Realtime call resilience
+## Устойчивость звонков в реальном времени
 
-| Metric | Before | After | Analog-style baseline |
+| Метрика | До | После | Базовый аналог |
 |---|---:|---:|---:|
 | Call drop events (10%+jitter, 60s) | 2 | 1 | 4 |
 | Successful recovery after transient path issue | Partial | Yes (relay fallback) | No |
 | Avg RTT under stress (ms) | 91 | 73 | 118 |
 
-## Observations
+## Наблюдения
 
-1. Runtime ICE policy switching reduces prolonged call failures in degraded paths.
-2. Retry/fallback strategy yields better continuity than direct-only behavior.
-3. Message reliability remains high due to existing ack/retry/outbox pipeline.
+1. Переключение политики ICE во время выполнения уменьшает продолжительные сбои звонков в деградированных путях.
+2. Стратегия повтора/fallback даёт лучшую непрерывность, чем поведение только прямое.
+3. Надёжность сообщений остаётся высокой благодаря существующему конвейеру ack/retry/outbox.
 
-## Conclusion
+## Заключение
 
-The "After" build demonstrates measurable robustness improvements versus baseline and simplified analog-style behavior, especially in degraded network conditions.
+Сборка "После" демонстрирует измеримые улучшения устойчивости по сравнению с базовой и упрощённым аналогичным поведением, особенно в деградированных сетевых условиях.
 

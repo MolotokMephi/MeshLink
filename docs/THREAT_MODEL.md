@@ -1,44 +1,44 @@
-# MeshLink Threat Model (Short)
+# Модель угроз MeshLink (Краткая)
 
-## Assets
+## Активы
 
-- message confidentiality/integrity,
-- peer identity and trust state,
-- file integrity,
-- call availability.
+- конфиденциальность/целостность сообщений,
+- идентичность peer и состояние доверия,
+- целостность файла,
+- доступность звонка.
 
-## Trust boundaries
+## Границы доверия
 
-1. Browser/UI boundary (untrusted input from network).
-2. Signaling/messaging transport boundary.
-3. Local storage boundary (SQLite, local files).
-4. Peer trust boundary (paired vs unpaired nodes).
+1. Граница Browser/UI (не доверенный ввод из сети).
+2. Граница транспорта сигнализации/сообщений.
+3. Граница локального хранения (SQLite, локальные файлы).
+4. Граница доверия peer (paired vs unpaired nodes).
 
-## Threats and controls
+## Угрозы и контроли
 
-### 1) Message tampering / spoofing
-- Threat: attacker injects modified payloads.
-- Controls: Ed25519 signature verification, trusted-only policy.
+### 1) Подделка / spoofing сообщений
+- Угроза: атакующий внедряет модифицированные payloads.
+- Контроли: верификация подписи Ed25519, политика только доверенных.
 
-### 2) Passive interception
-- Threat: eavesdropping on traffic.
-- Controls: X25519 session + AES-256-GCM encryption.
+### 2) Пассивное перехватывание
+- Угроза: подслушивание трафика.
+- Контроли: сессия X25519 + шифрование AES-256-GCM.
 
-### 3) Replay / loop amplification
-- Threat: replayed or looping relay packets.
-- Controls: `msg_id` dedup, TTL decrement, relay path checks.
+### 3) Replay / усиление петли
+- Угроза: replayed или looping relay packets.
+- Контроли: dedup `msg_id`, декремент TTL, проверки пути relay.
 
 ### 4) Spam / flood
-- Threat: excessive message rate degrades node.
-- Controls: rate limiting, temporary bans, blacklist, outbox and relay backpressure.
+- Угроза: чрезмерная скорость сообщений деградирует узел.
+- Контроли: rate limiting, временные bans, blacklist, backpressure outbox и relay.
 
-### 5) File corruption
-- Threat: damaged or truncated payload.
-- Controls: SHA-256 verification, resume with offset hash validation.
+### 5) Повреждение файла
+- Угроза: повреждённый или усечённый payload.
+- Контроли: верификация SHA-256, resume с валидацией хэша смещения.
 
-## Residual risks
+## Остаточные риски
 
-- No full PKI chain of trust.
-- TURN/NAT fallback requires careful credential lifecycle management.
-- Compromised trusted peer remains a high-impact risk.
+- Нет полной цепочки доверия PKI.
+- TURN/NAT fallback требует тщательного управления жизненным циклом credentials.
+- Компрометированный доверенный peer остаётся риском высокого воздействия.
 

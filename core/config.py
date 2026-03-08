@@ -56,6 +56,8 @@ DISCOVERY_PEERS = [p.strip() for p in os.environ.get("MESHLINK_DISCOVERY_PEERS",
 # ──────────────────────────────────────────────
 CHUNK_SIZE   = 64 * 1024
 MAX_FILE_SIZE = 2 * 1024 ** 3
+# Optional rate limit in KB/s (0 = unlimited, relies on parallelism limit only)
+FILE_RATE_LIMIT_KBPS = int(os.environ.get("MESHLINK_FILE_RATE_LIMIT_KBPS", 0))
 
 # Downloads dir is per-user
 def _make_downloads_dir() -> str:

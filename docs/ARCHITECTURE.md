@@ -1,6 +1,6 @@
-# MeshLink Architecture (Hex.Team)
+# Архитектура MeshLink (Hex.Team)
 
-## 1. High-level view
+## 1. Высокий уровень обзора
 
 ```mermaid
 flowchart LR
@@ -15,45 +15,45 @@ flowchart LR
     NODE --> STORE[Storage\ncore/storage.py]
 ```
 
-## 2. Topology and routing
+## 2. Топология и маршрутизация
 
-- Topology: LAN mesh.
-- Discovery: UDP broadcast + multicast + static peers.
-- Routing: controlled flooding with:
-  - `msg_id` deduplication,
-  - TTL decrement,
-  - relay path tracking,
-  - fanout under backpressure limits.
+- Топология: LAN mesh.
+- Обнаружение: UDP broadcast + multicast + static peers.
+- Маршрутизация: контролируемое flooding с:
+  - дедупликацией `msg_id`,
+  - декрементом TTL,
+  - отслеживанием пути ретрансляции,
+  - fanout под пределами backpressure.
 
-## 3. Reliability model
+## 3. Модель надёжности
 
-- Text messaging:
-  - delivery tracking (`DELIVERY_ACK`),
-  - retry with exponential backoff,
-  - persistent outbox and replay.
-- Files:
-  - chunk transfer,
-  - SHA-256 integrity check,
-  - partial resume with offset hash validation.
+- Текстовые сообщения:
+  - отслеживание доставки (`DELIVERY_ACK`),
+  - повтор с экспоненциальным backoff,
+  - постоянный outbox и replay.
+- Файлы:
+  - передача по частям,
+  - проверка целостности SHA-256,
+  - частичное возобновление с валидацией хэша смещения.
 
-## 4. Real-time media
+## 4. Медиа в реальном времени
 
-- Signaling over Socket.IO / messaging channel.
-- Browser WebRTC for RTP transport.
-- Live QoS in UI: RTT, jitter, loss, bitrate (`getStats()` + EMA).
+- Сигнализация через Socket.IO / канал сообщений.
+- Browser WebRTC для транспорта RTP.
+- Живой QoS в UI: RTT, jitter, loss, bitrate (`getStats()` + EMA).
 
-## 5. Security model
+## 5. Модель безопасности
 
-- Key exchange: X25519 (ECDH).
-- Message encryption: AES-256-GCM.
-- Integrity/authenticity: Ed25519 signatures.
-- Trust onboarding: seed pairing (trusted-only policy).
-- Abuse controls: rate-limit, autoban, blacklist.
+- Обмен ключами: X25519 (ECDH).
+- Шифрование сообщений: AES-256-GCM.
+- Целостность/аутентичность: подписи Ed25519.
+- Внедрение доверия: seed pairing (политика только доверенных).
+- Контроли злоупотреблений: rate-limit, autoban, blacklist.
 
-## 6. Group chat extension
+## 6. Расширение группового чата
 
-- Added protocol message type `GROUP_TEXT`.
-- Group metadata held in `MeshNode.groups`.
-- Group fanout send from sender to trusted members.
-- Group messages are rendered as chats with key `group:<group_id>`.
+- Добавлен тип сообщения протокола `GROUP_TEXT`.
+- Метаданные группы хранятся в `MeshNode.groups`.
+- Групповой fanout отправка от отправителя доверенным членам.
+- Групповые сообщения отображаются как чаты с ключом `group:<group_id>`.
 

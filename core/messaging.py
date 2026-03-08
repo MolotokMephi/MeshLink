@@ -663,16 +663,16 @@ def make_key_exchange(public_key_b64: str, signing_key_b64: str = "") -> Message
     )
 
 
-def make_seed_pair_message(peer_id_target: str, seed: str) -> Message:
+def make_seed_pair_message(peer_id_target: str, seed: str, phase: str = "request") -> Message:
     """
-    SEED_PAIR handshake — notifies a peer that we've activated seed-pairing.
-    The actual seed is exchanged out-of-band (shown in UI).
+    SEED_PAIR handshake — two-phase validated pairing.
+    phase: "request" (joiner→generator), "confirm" (generator→joiner), "reject"
     """
     return Message(
         msg_type=    MsgType.SEED_PAIR,
         sender_id=   NODE_ID,
         sender_name= NODE_NAME,
-        payload=     {"target": peer_id_target, "status": "paired", "seed": seed},
+        payload=     {"target": peer_id_target, "seed": seed, "phase": phase},
     )
 
 

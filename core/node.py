@@ -198,7 +198,8 @@ class MeshNode:
         self._event_handlers: Dict[str, List[Callable]] = {}
         self._relay_pressure_lock = threading.Lock()
         self._relay_pending = 0
-        self.expected_seeds: Dict[str, str] = {}  # peer_id -> expected seed for pairing
+        self.expected_seeds: Dict[str, str] = {}  # peer_id -> expected seed (generator side)
+        self._pending_pair_seeds: Dict[str, str] = {}  # peer_id -> seed we sent (joiner side)
         self._setup_handlers()
 
     def _inc_metric(self, key: str, delta: int = 1):
@@ -461,19 +462,55 @@ class MeshNode:
     def _on_typing(self, msg: Message):
         if not self._rate_limiter.is_allowed(msg.sender_id):
             return
+        if not self.crypto.is_trusted(msg.sender_id):
+            return
         self._emit("typing", {"peer_id": msg.sender_id, "peer_name": msg.sender_name})
 
     def _on_seed_pair(self, msg: Message):
         peer_id = msg.sender_id
         seed = msg.payload.get("seed", "").upper()
-        expected_seed = self.expected_seeds.get(peer_id, "").upper()
-        if seed and expected_seed == seed:
-            # Mutual pairing: establish session with the expected seed
-            self.crypto.establish_seed_session(peer_id, seed)
-            self._record_security_event("seed_paired_mutual", peer_id, {"peer_name": msg.sender_name})
-            self.expected_seeds.pop(peer_id, None)
-            self._emit("seed_pair_result", {"ok": True, "peer_id": peer_id})
-        self._emit("seed_paired", {"peer_id": peer_id, "peer_name": msg.sender_name})
+        phase = msg.payload.get("phase", "request")
+
+        if phase == "request":
+            # Remote peer is asking to pair with this seed.
+            # Validate against our generated expected_seeds.
+            expected_seed = self.expected_seeds.get(peer_id, "").upper()
+            if seed and expected_seed and expected_seed == seed:
+                # Match! Establish trusted session on our side.
+                self.crypto.establish_seed_session(peer_id, seed)
+                self._record_security_event("seed_paired_mutual", peer_id, {"peer_name": msg.sender_name})
+                self.expected_seeds.pop(peer_id, None)
+                # Send confirmation back so the joiner also trusts.
+                peer = self.discovery.get_peer(peer_id)
+                if peer:
+                    confirm = make_seed_pair_message(peer_id, seed, phase="confirm")
+                    self.msg_server.send_to_peer(peer.ip, peer.tcp_port, confirm, peer_id)
+                self._emit("seed_paired", {"peer_id": peer_id, "peer_name": msg.sender_name})
+                self._emit("seed_pair_result", {"ok": True, "peer_id": peer_id})
+            else:
+                # Mismatch — send rejection.
+                self._record_security_event("seed_pair_rejected", peer_id, {"peer_name": msg.sender_name})
+                peer = self.discovery.get_peer(peer_id)
+                if peer:
+                    reject = make_seed_pair_message(peer_id, "", phase="reject")
+                    self.msg_server.send_to_peer(peer.ip, peer.tcp_port, reject, peer_id)
+
+        elif phase == "confirm":
+            # Generator confirmed our seed was correct. Now we can trust.
+            pending_seed = self._pending_pair_seeds.get(peer_id, "").upper()
+            if seed and pending_seed and pending_seed == seed:
+                self.crypto.establish_seed_session(peer_id, seed)
+                self._record_security_event("seed_paired_confirmed", peer_id, {"peer_name": msg.sender_name})
+                self._pending_pair_seeds.pop(peer_id, None)
+                self._emit("seed_pair_result", {"ok": True, "peer_id": peer_id})
+            else:
+                self._record_security_event("seed_pair_confirm_mismatch", peer_id, {})
+
+        elif phase == "reject":
+            # Generator rejected our seed — wrong code.
+            self._pending_pair_seeds.pop(peer_id, None)
+            self._record_security_event("seed_pair_rejected_remote", peer_id, {})
+            self._emit("seed_pair_result", {"ok": False, "peer_id": peer_id, "reason": "mismatch"})
 
     # ── Mesh flooding / relay ────────────────────────────────────────────────
 
@@ -705,6 +742,8 @@ class MeshNode:
         peer = self.discovery.get_peer(peer_id)
         if not peer:
             return
+        if not self.crypto.is_trusted(peer_id):
+            return
         msg = Message(msg_type=MsgType.TYPING, sender_id=NODE_ID,
                       sender_name=NODE_NAME, payload={})
         self.msg_server.send_to_peer(peer.ip, peer.tcp_port, msg, peer_id)
@@ -728,16 +767,16 @@ class MeshNode:
     def pair_with_seed(self, peer_id: str, seed: str) -> dict:
         if not seed or len(seed) != 6 or not all(c in SEED_ALPHABET for c in seed.upper()):
             return {"ok": False, "reason": "invalid"}
+        seed = seed.upper()
         if seed == self.expected_seeds.get(peer_id):
             return {"ok": False, "reason": "own_seed"}
-        self.expected_seeds[peer_id] = seed
-        self.crypto.establish_seed_session(peer_id, seed)
-        self._record_security_event("seed_paired_local", peer_id, {})
+        # Store as pending — do NOT trust yet. Wait for remote confirmation.
+        self._pending_pair_seeds[peer_id] = seed
         peer = self.discovery.get_peer(peer_id)
         if peer:
-            notify = make_seed_pair_message(peer_id, seed)
+            notify = make_seed_pair_message(peer_id, seed, phase="request")
             self.msg_server.send_to_peer(peer.ip, peer.tcp_port, notify, peer_id)
-        return {"ok": True}
+        return {"ok": True, "status": "pending"}
 
     def is_peer_trusted(self, peer_id: str) -> bool:
         return self.crypto.is_trusted(peer_id)
@@ -764,7 +803,7 @@ class MeshNode:
 
     def get_chat(self, peer_id: str) -> list:
         """Get chat history for a peer as list of dicts."""
-        return [msg.__dict__ for msg in self.chats.get(peer_id, [])]
+        return [msg.to_dict() for msg in self.chats.get(peer_id, [])]
 
     # ── Unified Statistics API ────────────────────────────────────────────────
 

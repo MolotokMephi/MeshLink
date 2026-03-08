@@ -144,8 +144,9 @@
         .input-wrapper{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);display:flex;align-items:flex-end;transition:border-color var(--tr)}
         .input-wrapper:focus-within{border-color:var(--accent)}
         #msg-input{flex:1;background:0 0;border:none;outline:none;color:var(--t1);font-family:'Outfit',sans-serif;font-size:14px;padding:12px 16px;resize:none;max-height:120px;line-height:1.5}
+        #msg-input:disabled{opacity:.4;cursor:not-allowed}
         #msg-input::placeholder{color:var(--t3)}
-        .btn-attach{padding:10px;background:0 0;border:none;color:var(--t3);cursor:pointer;transition:color var(--tr)}.btn-attach:hover{color:var(--t1)}
+        .btn-attach{padding:10px;background:0 0;border:none;color:var(--t3);cursor:pointer;transition:color var(--tr)}.btn-attach:hover{color:var(--t1)}.btn-attach:disabled{opacity:.3;cursor:not-allowed}
         .btn-send{width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:var(--accent);border:none;border-radius:var(--r);color:#fff;cursor:pointer;transition:all var(--tr);flex-shrink:0}
         .btn-send:hover{background:var(--accent2);transform:scale(1.05)}.btn-send:disabled{opacity:.3;cursor:default;transform:none}
 
@@ -569,18 +570,27 @@ socket.on('security_event', e => {
 
 socket.on('seed_paired', d => {
     if(d && d.peer_id) {
-        toast(`Peer ${d.peer_name || d.peer_id} has paired with you`);
+        S.trustedPeers.add(d.peer_id);
+        renderPeers();
+        updatePairBanner();
+        toast(`Paired with ${d.peer_name || d.peer_id} successfully!`);
     }
 });
 socket.on('seed_pair_result', d => {
     if(d && d.ok) {
-        S.trustedPeers.add(d.peer_id);
-        renderPeers();
-        updatePairBanner();
-        toast('Pairing successful!');
+        if(d.status === 'pending') {
+            toast('Code sent — waiting for peer to confirm...');
+        } else {
+            S.trustedPeers.add(d.peer_id);
+            renderPeers();
+            updatePairBanner();
+            toast('Pairing successful!');
+        }
     } else {
         if(d.reason === 'own_seed') {
             toast('Cannot enter your own seed code — share it with the other peer');
+        } else if(d.reason === 'mismatch') {
+            toast('Pairing failed — wrong code. Check and try again.');
         } else {
             toast('Pairing failed — check the code');
         }
@@ -679,9 +689,14 @@ function selectPeer(pid){
 
 function updatePairBanner(){
     const banner = document.getElementById('pair-banner');
-    if(!S.activePeer){banner.classList.remove('visible'); btnSend.disabled = !msgInput.value.trim(); return;}
-    banner.classList.toggle('visible', !S.trustedPeers.has(S.activePeer));
-    btnSend.disabled = !msgInput.value.trim() || !S.trustedPeers.has(S.activePeer);
+    const attachBtn = document.querySelector('.btn-attach');
+    if(!S.activePeer){banner.classList.remove('visible'); btnSend.disabled = !msgInput.value.trim(); msgInput.disabled=false; if(attachBtn)attachBtn.disabled=false; return;}
+    const paired = S.trustedPeers.has(S.activePeer);
+    banner.classList.toggle('visible', !paired);
+    btnSend.disabled = !msgInput.value.trim() || !paired;
+    msgInput.disabled = !paired;
+    msgInput.placeholder = paired ? 'Type a message...' : 'Pair with this peer first to send messages';
+    if(attachBtn) attachBtn.disabled = !paired;
 }
 
 function renderMsgs(pid, keepScroll=false){
@@ -784,7 +799,8 @@ function scrollBotIfNear(){if(isNearBottom())scrollBot();}
 const msgInput=document.getElementById('msg-input');
 const btnSend=document.getElementById('btn-send');
 msgInput.addEventListener('input',()=>{
-    btnSend.disabled = !msgInput.value.trim() || !S.trustedPeers.has(S.activePeer);
+    const paired = S.trustedPeers.has(S.activePeer);
+    btnSend.disabled = !msgInput.value.trim() || !paired;
     msgInput.style.height='auto';
     msgInput.style.height=Math.min(msgInput.scrollHeight,120)+'px';
 });
@@ -792,6 +808,7 @@ function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMe
 let typTO=null;
 function handleTyping(){
     if(!S.activePeer)return;
+    if(!S.trustedPeers.has(S.activePeer))return;
     if(!typTO)socket.emit('typing',{peer_id:S.activePeer});
     clearTimeout(typTO);typTO=setTimeout(()=>typTO=null,2000);
 }
@@ -1105,6 +1122,8 @@ function showActiveCall(isVideo){
     document.getElementById('ringing-ui').style.display='none';
     const acu=document.getElementById('active-call-ui');
     acu.style.display='flex';
+    // Show/hide camera toggle — only relevant for video calls
+    document.getElementById('btn-vidtoggle').style.display = isVideo ? '' : 'none';
     if(isVideo){
         document.getElementById('call-videos').style.display='block';
         document.getElementById('call-audio-only').style.display='none';

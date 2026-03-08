@@ -217,9 +217,10 @@ def api_seed_pair():
     if not peer_id or not seed:
         return jsonify({"error": "peer_id and seed required"}), 400
     result = node.pair_with_seed(peer_id, seed)
-    if result["ok"]:
-        return jsonify({"status": "paired", "peer_id": peer_id})
-    if result["reason"] == "own_seed":
+    if result.get("ok"):
+        status = result.get("status", "pending")
+        return jsonify({"status": status, "peer_id": peer_id})
+    if result.get("reason") == "own_seed":
         return jsonify({"error": "Cannot pair with your own seed code"}), 400
     return jsonify({"error": "Pairing failed"}), 400
 
@@ -344,7 +345,11 @@ def on_seed_pair(data):
     seed = data.get("seed", "").strip().upper()
     if peer_id and seed:
         result = node.pair_with_seed(peer_id, seed)
-        emit("seed_pair_result", {**result, "peer_id": peer_id})
+        if result.get("ok") and result.get("status") == "pending":
+            # Don't emit success yet — wait for remote confirmation via seed_pair_result event
+            emit("seed_pair_result", {"ok": True, "peer_id": peer_id, "status": "pending"})
+        else:
+            emit("seed_pair_result", {**result, "peer_id": peer_id})
 
 @socketio.on("blacklist_peer")
 def on_blacklist_peer(data):

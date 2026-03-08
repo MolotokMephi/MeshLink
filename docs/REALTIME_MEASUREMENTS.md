@@ -1,58 +1,58 @@
-# Realtime QoS Measurement Methodology
+# Методология измерения QoS в реальном времени
 
-## Purpose
+## Цель
 
-Define a reproducible method to measure call quality for Hex.Team defense:
+Определить воспроизводимый метод измерения качества звонка для защиты Hex.Team:
 
 - latency (RTT),
 - packet loss,
 - jitter,
 - bitrate,
-- behavior under induced losses.
+- поведение при индуцированных потерях.
 
-## Instrumentation in MeshLink
+## Инструментарий в MeshLink
 
-- Source: browser `RTCPeerConnection.getStats()`.
-- Sampling period: 1 second.
-- Smoothing: EMA with `alpha = 0.3`.
-- Displayed metrics: latency, loss, jitter, bitrate.
+- Источник: browser `RTCPeerConnection.getStats()`.
+- Период сэмплинга: 1 секунда.
+- Сглаживание: EMA с `alpha = 0.3`.
+- Отображаемые метрики: latency, loss, jitter, bitrate.
 
-## Test setup
+## Настройка теста
 
-1. Start 2 nodes in same LAN.
-2. Pair peers with seed pairing.
-3. Start audio call.
-4. Keep call for at least 60s.
-5. Collect metrics every second.
+1. Запустить 2 узла в одной LAN.
+2. Сопоставить peers с seed pairing.
+3. Начать аудио звонок.
+4. Держать звонок не менее 60с.
+5. Собирать метрики каждую секунду.
 
-## Loss injection scenarios
+## Сценарии инъекции потери
 
-Use OS/network tooling (e.g., `tc/netem`, clumsy, router QoS) to emulate:
+Использовать инструменты OS/network (например, `tc/netem`, clumsy, router QoS) для эмуляции:
 
-- Baseline: no induced loss.
-- Scenario A: 5% packet loss for 60s.
-- Scenario B: 10% packet loss + jitter burst.
-- Scenario C: relay degradation / path interruption (if routing path allows).
+- Baseline: нет индуцированной потери.
+- Сценарий A: 5% packet loss на 60с.
+- Сценарий B: 10% packet loss + jitter burst.
+- Сценарий C: relay degradation / прерывание пути (если путь маршрутизации позволяет).
 
-## Result table (measured)
+## Таблица результатов (измеренные)
 
-| Scenario | Avg RTT (ms) | Avg Loss (%) | Avg Jitter (ms) | Avg Bitrate (kbps) | Disconnects | Notes |
+| Сценарий | Avg RTT (ms) | Avg Loss (%) | Avg Jitter (ms) | Avg Bitrate (kbps) | Disconnects | Notes |
 |---|---:|---:|---:|---:|---:|---|
-| Baseline | 34 | 0.3 | 5.1 | 61 | 0 | Stable LAN audio call, no manual degradation |
-| A: 5% loss | 49 | 4.7 | 9.8 | 58 | 0 | Audio remained intelligible, UI metrics responsive |
-| B: 10% + jitter burst | 73 | 9.6 | 18.4 | 54 | 1 | Short reconnection observed, recovered without app restart |
-| C: relay disruption | 112 | 7.9 | 22.7 | 47 | 0 | With relay ICE policy fallback call resumed after retry |
+| Baseline | 34 | 0.3 | 5.1 | 61 | 0 | Стабильный LAN аудио звонок, без ручной деградации |
+| A: 5% loss | 49 | 4.7 | 9.8 | 58 | 0 | Аудио осталось понятным, UI метрики отзывчивые |
+| B: 10% + jitter burst | 73 | 9.6 | 18.4 | 54 | 1 | Наблюдалось короткое переподключение, восстановлено без перезапуска приложения |
+| C: relay disruption | 112 | 7.9 | 22.7 | 47 | 0 | С fallback политики relay ICE звонок возобновился после retry |
 
-## Acceptance criteria for demo
+## Критерии принятия для демо
 
-- UI remains interactive.
-- Metrics react to induced degradation.
-- Recovery trend visible after loss is removed.
-- Call does not crash under moderate loss.
+- UI остаётся интерактивным.
+- Метрики реагируют на индуцированную деградацию.
+- Тренд восстановления виден после удаления потери.
+- Звонок не крашится при умеренной потере.
 
-## Notes on repeatability
+## Замечания по повторяемости
 
-- Measurement window per scenario: 60 seconds.
-- Sampling period: 1 second (`getStats`).
-- Values reported above are arithmetic means of displayed EMA time-series.
+- Окно измерения на сценарий: 60 секунд.
+- Период сэмплинга: 1 секунда (`getStats`).
+- Значения, приведённые выше, являются арифметическими средними отображаемых EMA time-series.
 
