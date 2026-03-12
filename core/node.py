@@ -444,9 +444,8 @@ class MeshNode:
         })
 
     def _on_call_accept(self, msg: Message):
-        peer = self.discovery.get_peer(msg.sender_id)
-        if peer:
-            self.media.start_call(peer.ip, peer.media_port)
+        # Do not start the UDP media engine here — browser calls use WebRTC/ICE
+        # and binding the UDP socket on the same port causes ICE candidate bind errors.
         self._emit("call_accepted", {"peer_id": msg.sender_id})
 
     def _on_call_reject(self, msg: Message):
@@ -944,7 +943,8 @@ class MeshNode:
         msg = Message(msg_type=MsgType.CALL_ACCEPT, sender_id=NODE_ID,
                       sender_name=NODE_NAME, payload={})
         self.msg_server.send_to_peer(peer.ip, peer.tcp_port, msg, peer_id)
-        self.media.start_call(peer.ip, peer.media_port)
+        # Do not start the UDP media engine here — browser calls use WebRTC/ICE
+        # and binding the UDP socket on the same port causes ICE candidate bind errors.
         self.current_call_peer = peer_id
         self._emit("call_accepted", {"peer_id": peer_id})
 
