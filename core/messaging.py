@@ -508,6 +508,15 @@ class MessageServer:
                     if not sock:
                         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                        # Use short keepalive intervals so half-closed connections are
+                        # detected quickly instead of silently dropping one message.
+                        if hasattr(socket, "TCP_KEEPIDLE"):
+                            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
+                        if hasattr(socket, "TCP_KEEPINTVL"):
+                            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
+                        if hasattr(socket, "TCP_KEEPCNT"):
+                            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
                         sock.settimeout(MESSAGING_CONNECT_TIMEOUT)
                         sock.connect((ip, port))
                         if peer_id:

@@ -269,7 +269,16 @@ class FileTransferManager:
                 mf_size = int(manifest.get("filesize", 0) or 0)
                 mf_name = str(manifest.get("filename", ""))
                 mf_offset = int(manifest.get("offset", 0) or 0)
-                if mf_size != int(filesize) or (mf_name and mf_name != filename) or mf_offset != existing:
+                mf_sender = str(manifest.get("sender_id", ""))
+                # Reject if a different sender tries to resume a partial started by
+                # someone else with the same file_id — prevents silent overwrite (BUG #8).
+                sender_mismatch = bool(mf_sender and sender_id and mf_sender != sender_id)
+                if sender_mismatch or mf_size != int(filesize) or (mf_name and mf_name != filename) or mf_offset != existing:
+                    if sender_mismatch:
+                        logger.warning(
+                            f"file_id {file_id}: sender_id mismatch "
+                            f"(expected {mf_sender!r}, got {sender_id!r}), resetting partial"
+                        )
                     try:
                         if os.path.exists(part_path):
                             os.remove(part_path)
@@ -291,11 +300,24 @@ class FileTransferManager:
                     self._remove_manifest(file_id)
                     existing = 0
                     manifest = {}
+            elif existing == 0 and remote_offset_sha:
+                # Sender provided a sha256 for offset 0; it must equal the hash of
+                # empty data. Any other value means the sender has a different idea
+                # of what file_id refers to — reject to prevent silent overwrites.
+                empty_sha = hashlib.sha256(b"").hexdigest()
+                if remote_offset_sha != empty_sha:
+                    logger.warning(f"Offset SHA mismatch at offset 0 for {filename}, rejecting")
+                    sock.sendall(json.dumps({"status": "rejected"}).encode() + b"\n")
+                    return
 
             existing_prefix_sha = ""
             if existing > 0 and os.path.exists(part_path):
                 existing_prefix_sha = self._sha256_prefix(part_path, existing)
                 storage.incr_counter("metrics.file_resume_total", 1.0)
+            elif existing == 0:
+                # Always send the well-known empty-SHA so the sender can verify
+                # we are starting from a clean state.
+                existing_prefix_sha = hashlib.sha256(b"").hexdigest()
 
             transfer.progress = existing
 
@@ -327,6 +349,7 @@ class FileTransferManager:
                     "file_id": file_id,
                     "filename": filename,
                     "filesize": int(filesize),
+                    "sender_id": sender_id,
                     "offset": int(existing),
                     "sha256_prefix": sha.hexdigest(),
                     "updated_at": time.time(),
@@ -355,6 +378,7 @@ class FileTransferManager:
                             "file_id": file_id,
                             "filename": filename,
                             "filesize": int(filesize),
+                            "sender_id": sender_id,
                             "offset": int(transfer.progress),
                             "sha256_prefix": sha.hexdigest(),
                             "updated_at": now,

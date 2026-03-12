@@ -468,8 +468,18 @@ class MeshNode:
 
     def _on_seed_pair(self, msg: Message):
         peer_id = msg.sender_id
-        seed = msg.payload.get("seed", "").upper()
         phase = msg.payload.get("phase", "request")
+
+        # Decrypt seed if the sender encrypted it with our E2E session key.
+        if msg.payload.get("encrypted") and self.crypto.has_session(peer_id):
+            try:
+                ct = base64.b64decode(msg.payload["ciphertext"])
+                seed = self.crypto.decrypt_from(peer_id, ct).decode("utf-8").upper()
+            except Exception as e:
+                logger.warning(f"Failed to decrypt seed from {peer_id}: {e}")
+                seed = ""
+        else:
+            seed = msg.payload.get("seed", "").upper()
 
         if phase == "request":
             # Remote peer is asking to pair with this seed.
@@ -484,6 +494,15 @@ class MeshNode:
                 peer = self.discovery.get_peer(peer_id)
                 if peer:
                     confirm = make_seed_pair_message(peer_id, seed, phase="confirm")
+                    # Encrypt the confirmation seed as well.
+                    if self.crypto.has_session(peer_id):
+                        try:
+                            ct = self.crypto.encrypt_for(peer_id, seed.encode("utf-8"))
+                            confirm.payload["encrypted"] = True
+                            confirm.payload["ciphertext"] = base64.b64encode(ct).decode()
+                            confirm.payload["seed"] = ""
+                        except Exception as e:
+                            logger.warning(f"Failed to encrypt confirm seed for {peer_id}: {e}")
                     self.msg_server.send_to_peer(peer.ip, peer.tcp_port, confirm, peer_id)
                 self._emit("seed_paired", {"peer_id": peer_id, "peer_name": msg.sender_name})
                 self._emit("seed_pair_result", {"ok": True, "peer_id": peer_id})
@@ -593,6 +612,13 @@ class MeshNode:
     # ── WebRTC signaling relay ────────────────────────────────────────────────
 
     def _on_webrtc_signal(self, msg: Message):
+        if not self._security_check(msg):
+            return
+        if not self.crypto.is_trusted(msg.sender_id):
+            self._record_security_event("webrtc_signal_blocked_untrusted", msg.sender_id, {
+                "msg_type": msg.msg_type,
+            })
+            return
         event_map = {
             MsgType.WEBRTC_OFFER: "webrtc_offer",
             MsgType.WEBRTC_ANSWER: "webrtc_answer",
@@ -775,6 +801,15 @@ class MeshNode:
         peer = self.discovery.get_peer(peer_id)
         if peer:
             notify = make_seed_pair_message(peer_id, seed, phase="request")
+            # Encrypt the seed payload if an E2E session is already established.
+            if self.crypto.has_session(peer_id):
+                try:
+                    ct = self.crypto.encrypt_for(peer_id, seed.encode("utf-8"))
+                    notify.payload["encrypted"] = True
+                    notify.payload["ciphertext"] = base64.b64encode(ct).decode()
+                    notify.payload["seed"] = ""
+                except Exception as e:
+                    logger.warning(f"Failed to encrypt seed for {peer_id}: {e}")
             self.msg_server.send_to_peer(peer.ip, peer.tcp_port, notify, peer_id)
         return {"ok": True, "status": "pending"}
 
