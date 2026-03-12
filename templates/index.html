@@ -617,6 +617,7 @@ socket.on('webrtc_offer', async d => {
     // Ensure callee uses correct media constraints (video vs audio).
     if(d && d.call_type) S.callType = d.call_type;
     await startWebRTC(false);
+    if(!pc) return;
     await pc.setRemoteDescription(new RTCSessionDescription(d.sdp));
     flushPendingIce();
     const answer = await pc.createAnswer();
@@ -968,11 +969,14 @@ async function startWebRTC(isCaller){
             rv.play?.().catch(()=>{});
         } else {
             const ra = document.getElementById('remote-audio');
-            ra.muted = false;
             ra.volume = 1.0;
             ra.srcObject = stream;
-            // Autoplay политики иногда блокируют звук без явного play().
-            ra.play?.().catch(()=>{});
+            // Start muted to satisfy autoplay policy, then unmute after play() resolves.
+            ra.muted = true;
+            ra.play().then(() => { ra.muted = false; }).catch(e => {
+                console.warn('Remote audio autoplay blocked:', e);
+                toast('Tap the page to activate audio');
+            });
         }
     };
 
@@ -1155,6 +1159,7 @@ function cleanupCall(full=true){
     document.getElementById('local-video').srcObject=null;
     document.getElementById('remote-audio').srcObject=null;
     S.callActive=false; S.muted=false; S.videoOff=false;
+    S._pendingIce=[]; S.rtcFallbackUsed=false;
     if(S.callTimer){clearInterval(S.callTimer);S.callTimer=null;}
     S.callSec=0;
     const timerEl=document.getElementById('call-timer');if(timerEl)timerEl.textContent='00:00';
