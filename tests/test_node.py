@@ -22,6 +22,7 @@ class _DummyPeer:
         self.ip = ip
         self.tcp_port = tcp_port
         self.file_port = file_port
+        self.media_port = tcp_port + 1
         self.name = name
 
 
@@ -150,3 +151,15 @@ def test_peer_activity_expires_stale_session(monkeypatch):
     assert node.crypto.has_session("peer-exp") is False
     events = node.get_security_events(20)
     assert any(ev["event"] == "session_expired" for ev in events)
+
+
+def test_call_fails_when_transport_unavailable(monkeypatch):
+    node = MeshNode()
+    node.discovery = _DummyDiscovery()
+    node.discovery._peers["p1"] = _DummyPeer()
+
+    monkeypatch.setattr(node.crypto, "is_trusted", lambda pid: True)
+    monkeypatch.setattr(node.msg_server, "send_to_peer", lambda *args, **kwargs: False)
+
+    ok = node.start_call("p1", "audio")
+    assert ok is False

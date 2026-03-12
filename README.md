@@ -4,7 +4,6 @@
 
 README приведён в соответствие с фактической реализацией и структурой ТЗ «Hex.Team — Система децентрализованной связи».
 Видео с демонстрацией работы проекта: https://drive.google.com/file/d/1sx_kQOuYpfUjvrz-cL4LNjZykuPfiy1r/view?usp=drivesdk
-
 ---
 
 ## 1) Цель проекта
@@ -68,17 +67,7 @@ templates/
 
 ### Архитектурная схема
 
-```mermaid
-flowchart LR
-    UI[Web UI] --> WS[web/server.py\nFlask + Socket.IO]
-    WS --> NODE[core/node.py\nMeshNode]
-    NODE --> DISC[core/discovery.py]
-    NODE --> MSG[core/messaging.py]
-    NODE --> FILE[core/file_transfer.py]
-    NODE --> MEDIA[core/media.py]
-    NODE --> CRYPTO[core/crypto.py]
-    NODE --> DB[core/storage.py\nSQLite]
-```
+Подробная схема вынесена в отдельный артефакт: `docs/ARCHITECTURE.md`.
 
 ### Топология
 
@@ -188,6 +177,16 @@ python main.py --name "Charlie" --web-port 8082 --tcp-port 5171 --media-port 517
 
 Показатели отображаются в интерфейсе в реальном времени.
 
+Дополнительно реализовано:
+- runtime-переключение ICE policy (`all` / `relay`) прямо в UI;
+- авто-fallback на `relay` при деградации соединения.
+
+Формализованная методика замеров и шаблон таблицы результатов:
+- `docs/REALTIME_MEASUREMENTS.md`
+
+Сравнительный отчёт по эффективности (до/после/условный baseline):
+- `docs/BENCHMARK_REPORT.md`
+
 ---
 
 ## 9) Передача файлов
@@ -199,7 +198,13 @@ python main.py --name "Charlie" --web-port 8082 --tcp-port 5171 --media-port 517
 - подтверждение завершения и retry;
 - resume с продолжением по offset + проверка offset-хеша;
 - хранение partial-файлов и докачка после разрыва;
-- ограничение нагрузки (лимит активных отправок/параллелизма).
+- ограничение нагрузки:
+  - лимит параллельных отправок (max 4 одновременных, `Semaphore`);
+  - опциональное ограничение скорости в КБ/с через переменную окружения
+    `MESHLINK_FILE_RATE_LIMIT_KBPS` (по умолчанию `0` — без ограничения).
+    При установке ненулевого значения между отправками каждого chunk'а
+    добавляется `time.sleep()`, что предотвращает «забивание» канала
+    сообщений и звонков.
 
 Диагностика: `GET /api/network/diagnostics`, `GET /api/transfers`.
 
@@ -224,6 +229,18 @@ python main.py --name "Charlie" --web-port 8082 --tcp-port 5171 --media-port 517
 - replay старых пакетов;
 - спам/флуд;
 - деградация канала (loss/jitter/disconnect).
+
+Отдельный документ с границами доверия и остаточными рисками:
+- `docs/THREAT_MODEL.md`
+
+---
+
+## 10.1) Fallback-архитектура NAT/STUN-TURN
+
+В репозиторий добавлен проектный документ fallback-стратегии:
+- `docs/NAT_FALLBACK.md`
+
+Текущая реализация ориентирована на LAN; документ описывает переход к STUN/TURN-режиму и политику выбора ICE.
 
 ---
 
@@ -261,6 +278,7 @@ python -m pytest -q
 - `GET /api/chat/<peer_id>`
 - `GET /api/transfers`
 - `GET /api/statistics`
+- `GET /api/webrtc/config`
 - `POST /api/upload`
 - `POST /api/add_peer`
 - `POST /api/seed/generate`

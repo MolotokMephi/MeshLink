@@ -23,7 +23,7 @@ from typing import Callable, Dict, Optional
 
 from .config import (
     NODE_ID, NODE_NAME, CHUNK_SIZE, MAX_FILE_SIZE,
-    DOWNLOADS_DIR, FILE_PORT,
+    DOWNLOADS_DIR, FILE_PORT, FILE_RATE_LIMIT_KBPS,
 )
 from .messaging import persist_chat_entry
 from . import storage
@@ -524,6 +524,12 @@ class FileTransferManager:
                     last_emit = time.time()
                     sock.settimeout(120)
 
+                    # Rate limiting: compute per-chunk delay if MESHLINK_FILE_RATE_LIMIT_KBPS is set
+                    _rate_delay = 0.0
+                    if FILE_RATE_LIMIT_KBPS > 0:
+                        _rate_bytes_per_sec = FILE_RATE_LIMIT_KBPS * 1024
+                        _rate_delay = CHUNK_SIZE / _rate_bytes_per_sec  # seconds per chunk
+
                     with open(filepath, "rb") as f:
                         f.seek(offset)
                         while transfer.progress < transfer.filesize:
@@ -543,6 +549,11 @@ class FileTransferManager:
                                 last_emit = now
                                 if self.on_progress:
                                     self.on_progress(transfer)
+
+                            # Throttle to configured rate limit
+                            if _rate_delay > 0:
+                                actual_delay = _rate_delay * (len(chunk) / CHUNK_SIZE)
+                                time.sleep(actual_delay)
 
                     if transfer.progress < transfer.filesize:
                         raise ConnectionError("Transfer interrupted before EOF")

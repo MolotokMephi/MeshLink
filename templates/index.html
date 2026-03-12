@@ -144,8 +144,9 @@
         .input-wrapper{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);display:flex;align-items:flex-end;transition:border-color var(--tr)}
         .input-wrapper:focus-within{border-color:var(--accent)}
         #msg-input{flex:1;background:0 0;border:none;outline:none;color:var(--t1);font-family:'Outfit',sans-serif;font-size:14px;padding:12px 16px;resize:none;max-height:120px;line-height:1.5}
+        #msg-input:disabled{opacity:.4;cursor:not-allowed}
         #msg-input::placeholder{color:var(--t3)}
-        .btn-attach{padding:10px;background:0 0;border:none;color:var(--t3);cursor:pointer;transition:color var(--tr)}.btn-attach:hover{color:var(--t1)}
+        .btn-attach{padding:10px;background:0 0;border:none;color:var(--t3);cursor:pointer;transition:color var(--tr)}.btn-attach:hover{color:var(--t1)}.btn-attach:disabled{opacity:.3;cursor:not-allowed}
         .btn-send{width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:var(--accent);border:none;border-radius:var(--r);color:#fff;cursor:pointer;transition:all var(--tr);flex-shrink:0}
         .btn-send:hover{background:var(--accent2);transform:scale(1.05)}.btn-send:disabled{opacity:.3;cursor:default;transform:none}
 
@@ -345,6 +346,7 @@
     </div>
 </div>
 
+
 <div class="toasts" id="toasts"></div>
 <input type="file" id="file-input" style="display:none" onchange="handleFileSelect(event)">
 
@@ -366,10 +368,37 @@ const S = {
     _restoredOnLoad: false,
     // WebRTC: ICE candidates can arrive before pc exists or before remoteDescription.
     _pendingIce: [],
+    rtcConfig: null,
+    rtcPolicy: 'all',
+    rtcFallbackUsed: false,
 };
 let pc = null;
 let localStream = null;
 let _rtcStatsInterval = null;
+
+async function loadRtcConfig(){
+    try{
+        const r = await fetch('/api/webrtc/config');
+        if(!r.ok) throw new Error('webrtc config unavailable');
+        const cfg = await r.json();
+        if(cfg && Array.isArray(cfg.iceServers) && cfg.iceServers.length){
+            S.rtcConfig = { iceServers: cfg.iceServers, iceTransportPolicy: (cfg.iceTransportPolicy || 'all') };
+            S.rtcPolicy = S.rtcConfig.iceTransportPolicy || 'all';
+        }
+    }catch(_){
+        S.rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], iceTransportPolicy: 'all' };
+        S.rtcPolicy = 'all';
+    }
+}
+
+function applyRtcPolicy(policy){
+    const p = (policy === 'relay') ? 'relay' : 'all';
+    S.rtcPolicy = p;
+    if(!S.rtcConfig) S.rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    S.rtcConfig.iceTransportPolicy = p;
+    const sel = document.getElementById('ice-policy');
+    if(sel) sel.value = p;
+}
 
 const COLORS = ['#6c63ff','#3dd68c','#ffa94d','#22d3ee','#ff6b6b','#a78bfa','#f472b6','#34d399'];
 function pColor(id){let h=0;for(let i=0;i<id.length;i++)h=id.charCodeAt(i)+((h<<5)-h);return COLORS[Math.abs(h)%COLORS.length]}
@@ -541,18 +570,27 @@ socket.on('security_event', e => {
 
 socket.on('seed_paired', d => {
     if(d && d.peer_id) {
-        toast(`Peer ${d.peer_name || d.peer_id} has paired with you`);
+        S.trustedPeers.add(d.peer_id);
+        renderPeers();
+        updatePairBanner();
+        toast(`Paired with ${d.peer_name || d.peer_id} successfully!`);
     }
 });
 socket.on('seed_pair_result', d => {
     if(d && d.ok) {
-        S.trustedPeers.add(d.peer_id);
-        renderPeers();
-        updatePairBanner();
-        toast('Pairing successful!');
+        if(d.status === 'pending') {
+            toast('Code sent — waiting for peer to confirm...');
+        } else {
+            S.trustedPeers.add(d.peer_id);
+            renderPeers();
+            updatePairBanner();
+            toast('Pairing successful!');
+        }
     } else {
         if(d.reason === 'own_seed') {
             toast('Cannot enter your own seed code — share it with the other peer');
+        } else if(d.reason === 'mismatch') {
+            toast('Pairing failed — wrong code. Check and try again.');
         } else {
             toast('Pairing failed — check the code');
         }
@@ -625,7 +663,7 @@ function renderPeers(){
             <div class="peer-avatar" style="background:${pColor(p.peer_id)}">${pInit(p.name)}<div class="status-dot"></div></div>
             <div class="peer-info">
                 <div class="peer-name">${escHtml(p.name)}</div>
-                <div class="peer-status-line">${trustHtml}</div>
+                <div class="peer-status-line">${trustHtml} · <span style="font-family:'JetBrains Mono',monospace">${escHtml(p.peer_id)}</span></div>
             </div>
             ${u?`<div class="peer-unread">${u}</div>`:''}
         </div>`;
@@ -651,9 +689,14 @@ function selectPeer(pid){
 
 function updatePairBanner(){
     const banner = document.getElementById('pair-banner');
-    if(!S.activePeer){banner.classList.remove('visible');return;}
-    banner.classList.toggle('visible', !S.trustedPeers.has(S.activePeer));
-    btnSend.disabled = !msgInput.value.trim() || !S.trustedPeers.has(S.activePeer);
+    const attachBtn = document.querySelector('.btn-attach');
+    if(!S.activePeer){banner.classList.remove('visible'); btnSend.disabled = !msgInput.value.trim(); msgInput.disabled=false; if(attachBtn)attachBtn.disabled=false; return;}
+    const paired = S.trustedPeers.has(S.activePeer);
+    banner.classList.toggle('visible', !paired);
+    btnSend.disabled = !msgInput.value.trim() || !paired;
+    msgInput.disabled = !paired;
+    msgInput.placeholder = paired ? 'Type a message...' : 'Pair with this peer first to send messages';
+    if(attachBtn) attachBtn.disabled = !paired;
 }
 
 function renderMsgs(pid, keepScroll=false){
@@ -756,7 +799,8 @@ function scrollBotIfNear(){if(isNearBottom())scrollBot();}
 const msgInput=document.getElementById('msg-input');
 const btnSend=document.getElementById('btn-send');
 msgInput.addEventListener('input',()=>{
-    btnSend.disabled = !msgInput.value.trim() || !S.trustedPeers.has(S.activePeer);
+    const paired = S.trustedPeers.has(S.activePeer);
+    btnSend.disabled = !msgInput.value.trim() || !paired;
     msgInput.style.height='auto';
     msgInput.style.height=Math.min(msgInput.scrollHeight,120)+'px';
 });
@@ -764,6 +808,7 @@ function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMe
 let typTO=null;
 function handleTyping(){
     if(!S.activePeer)return;
+    if(!S.trustedPeers.has(S.activePeer))return;
     if(!typTO)socket.emit('typing',{peer_id:S.activePeer});
     clearTimeout(typTO);typTO=setTimeout(()=>typTO=null,2000);
 }
@@ -872,8 +917,6 @@ function completeXfer(d){
 // ═══════════════════════════════════════════════
 //  WEBRTC CALLS WITH LIVE METRICS
 // ═══════════════════════════════════════════════
-const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
 function initiateCall(type){
     if(!S.activePeer)return;
     S.callPeer=S.activePeer; S.callType=type; S.callDir='outgoing';
@@ -909,7 +952,8 @@ async function startWebRTC(isCaller){
         lv.play?.().catch(()=>{});
     }
 
-    pc = new RTCPeerConnection(rtcConfig);
+    const runtimeCfg = S.rtcConfig || { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], iceTransportPolicy: S.rtcPolicy || 'all' };
+    pc = new RTCPeerConnection(runtimeCfg);
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
 
     // In case ICE candidates arrived before pc was created.
@@ -939,7 +983,21 @@ async function startWebRTC(isCaller){
 
     pc.onconnectionstatechange = () => {
         if(pc.connectionState === 'connected'){ S.callActive = true; startTimer(); startRTCStats(); }
-        if(pc.connectionState === 'disconnected' || pc.connectionState === 'failed') hangUp();
+        if(pc.connectionState === 'disconnected' || pc.connectionState === 'failed'){
+            if(!S.rtcFallbackUsed && S.rtcPolicy !== 'relay'){
+                S.rtcFallbackUsed = true;
+                applyRtcPolicy('relay');
+                toast('Network degradation detected: switching ICE to relay and retrying call');
+                const peer = S.callPeer;
+                const ctype = S.callType || 'audio';
+                cleanupCall(false);
+                if(peer){
+                    socket.emit('start_call',{peer_id:peer,call_type:ctype});
+                }
+                return;
+            }
+            hangUp();
+        }
     };
 
     if(isCaller){
@@ -1064,6 +1122,8 @@ function showActiveCall(isVideo){
     document.getElementById('ringing-ui').style.display='none';
     const acu=document.getElementById('active-call-ui');
     acu.style.display='flex';
+    // Show/hide camera toggle — only relevant for video calls
+    document.getElementById('btn-vidtoggle').style.display = isVideo ? '' : 'none';
     if(isVideo){
         document.getElementById('call-videos').style.display='block';
         document.getElementById('call-audio-only').style.display='none';
@@ -1180,6 +1240,29 @@ function addPeer(){
         }
     }).catch(() => toast('Failed to add peer'));
 }
+
+// Runtime ICE policy switch
+document.addEventListener('DOMContentLoaded', async ()=>{
+    await loadRtcConfig();
+    const controlsHost = document.querySelector('.stats-panel');
+    if(controlsHost && !document.getElementById('ice-policy')){
+        const wrap = document.createElement('div');
+        wrap.className = 'form-group';
+        wrap.style.marginTop = '8px';
+        wrap.innerHTML = `<label class="form-label" style="font-size:11px">ICE Policy</label>
+            <select id="ice-policy" class="form-input" style="font-size:12px;padding:6px 8px">
+                <option value="all">all (direct + relay)</option>
+                <option value="relay">relay only (TURN)</option>
+            </select>`;
+        controlsHost.appendChild(wrap);
+        const sel = document.getElementById('ice-policy');
+        sel.value = S.rtcPolicy || 'all';
+        sel.addEventListener('change', ()=>{
+            applyRtcPolicy(sel.value);
+            toast(`ICE policy switched to ${S.rtcPolicy}`);
+        });
+    }
+});
 </script>
 </body>
 </html>
