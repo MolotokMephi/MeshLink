@@ -607,7 +607,7 @@ socket.on('call_incoming', d => {
     showRinging(d.peer_name, d.call_type, true);
 });
 socket.on('call_outgoing', d => { showRinging(d.peer_name, d.call_type, false); });
-socket.on('call_accepted', d => { if(S.callDir==='outgoing') startWebRTC(true); });
+socket.on('call_accepted', d => { if(d.peer_id === S.callPeer && S.callDir === 'outgoing') startWebRTC(true); });
 socket.on('call_rejected', () => { cleanupCall(); hideCall(); toast('Call declined'); });
 socket.on('call_ended', () => { cleanupCall(); hideCall(); toast('Call ended'); });
 
@@ -919,7 +919,7 @@ function completeXfer(d){
 //  WEBRTC CALLS WITH LIVE METRICS
 // ═══════════════════════════════════════════════
 function initiateCall(type){
-    if(!S.activePeer)return;
+    if(!S.activePeer || S.callPeer)return;
     S.callPeer=S.activePeer; S.callType=type; S.callDir='outgoing';
     socket.emit('start_call',{peer_id:S.activePeer,call_type:type});
 }
@@ -927,6 +927,8 @@ function initiateCall(type){
 function acceptIncoming(){
     if(!S.callPeer)return;
     socket.emit('accept_call',{peer_id:S.callPeer});
+    document.getElementById('call-status-ring').textContent = 'Connecting...';
+    document.getElementById('btn-accept').style.display = 'none';
 }
 
 async function startWebRTC(isCaller){
@@ -956,9 +958,6 @@ async function startWebRTC(isCaller){
     const runtimeCfg = S.rtcConfig || { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], iceTransportPolicy: S.rtcPolicy || 'all' };
     pc = new RTCPeerConnection(runtimeCfg);
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-
-    // In case ICE candidates arrived before pc was created.
-    flushPendingIce();
 
     pc.ontrack = (e) => {
         // Safari/Firefox may not always populate e.streams.
@@ -994,9 +993,12 @@ async function startWebRTC(isCaller){
                 toast('Network degradation detected: switching ICE to relay and retrying call');
                 const peer = S.callPeer;
                 const ctype = S.callType || 'audio';
+                const dir = S.callDir;
                 cleanupCall(false);
-                if(peer){
+                if(peer && dir === 'outgoing'){
                     socket.emit('start_call',{peer_id:peer,call_type:ctype});
+                } else {
+                    hangUp();
                 }
                 return;
             }
