@@ -25,6 +25,7 @@ from .config import (
     DISCOVERY_PORT, TCP_PORT, MEDIA_PORT, FILE_PORT, WEB_PORT,
     DISCOVERY_INTERVAL, PEER_TIMEOUT,
     BROADCAST_ADDR, MULTICAST_GROUPS, DISCOVERY_MAGIC, DISCOVERY_PEERS,
+    get_local_ip,
 )
 
 logger = logging.getLogger("meshlink.discovery")
@@ -42,27 +43,64 @@ def _try_auto_firewall():
                 logger.info("UFW is inactive, no firewall rules needed")
                 return
             if result.returncode == 0:
+                failed_ufw = []
                 for port in ports:
-                    subprocess.run(
+                    r = subprocess.run(
                         ["sudo", "-n", "ufw", "allow", str(port)],
                         capture_output=True, timeout=5,
                     )
-                logger.info(f"Auto-added UFW allow rules for ports: {ports}")
+                    if r.returncode != 0:
+                        err = (r.stderr or b"").decode(errors="ignore").strip()
+                        failed_ufw.append((port, err))
+                if failed_ufw:
+                    logger.warning(
+                        "Could not add UFW rules for some ports (sudo may require a password "
+                        "or '-n' flag is unsupported on this system). "
+                        f"Failed ports: {[p for p,_ in failed_ufw]}. "
+                        "Add rules manually: sudo ufw allow <port>"
+                    )
+                else:
+                    logger.info(f"Auto-added UFW allow rules for ports: {ports}")
                 return
-        except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "UFW auto-config timed out — 'sudo -n ufw' may be waiting for a password. "
+                "Add firewall rules manually if needed."
+            )
+        except FileNotFoundError:
+            logger.debug("UFW not found, skipping")
+        except Exception as e:
             logger.debug(f"UFW auto-config skipped: {e}")
 
         # Try iptables directly
         try:
+            failed_ipt = []
             for port in ports:
                 for proto in ("tcp", "udp"):
-                    subprocess.run(
+                    r = subprocess.run(
                         ["sudo", "-n", "iptables", "-A", "INPUT", "-p", proto,
                          "--dport", str(port), "-j", "ACCEPT"],
                         capture_output=True, timeout=5,
                     )
-            logger.info(f"Auto-added iptables rules for ports: {ports}")
-        except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+                    if r.returncode != 0:
+                        err = (r.stderr or b"").decode(errors="ignore").strip()
+                        failed_ipt.append((port, proto, err))
+            if failed_ipt:
+                logger.warning(
+                    "Could not add iptables rules (sudo may require a password). "
+                    f"Failed: {[(p, pr) for p, pr, _ in failed_ipt]}. "
+                    "Add rules manually: sudo iptables -A INPUT -p <proto> --dport <port> -j ACCEPT"
+                )
+            else:
+                logger.info(f"Auto-added iptables rules for ports: {ports}")
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "iptables auto-config timed out — 'sudo -n iptables' may be waiting for a password. "
+                "Add firewall rules manually if needed."
+            )
+        except FileNotFoundError:
+            logger.debug("iptables not found, skipping")
+        except Exception as e:
             logger.debug(f"iptables auto-config skipped: {e}")
     elif platform.system() == "Windows":
         # Try Windows Firewall
@@ -216,10 +254,13 @@ class DiscoveryService:
         self.on_peer_left:   Optional[Callable[[PeerInfo], None]] = None
 
     def _make_announcement(self) -> bytes:
+        # Re-resolve LOCAL_IP each time so that a VPN or network change that
+        # happens after startup is reflected in future announcements without
+        # requiring a full restart.
         payload = {
             "id":          NODE_ID,
             "name":        NODE_NAME,
-            "ip":          LOCAL_IP,
+            "ip":          get_local_ip(),
             "tcp_port":    TCP_PORT,
             "media_port":  MEDIA_PORT,
             "file_port":   FILE_PORT,

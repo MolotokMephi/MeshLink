@@ -295,9 +295,18 @@ class MessageServer:
         )
 
     def _resend_loop(self):
+        # Exponential back-off at the loop level: when the outbox is empty (or
+        # every send in this iteration failed) we progressively back off up to
+        # _RESEND_MAX_SLEEP seconds to avoid hammering the DB.  A successful
+        # delivery resets the interval back to the minimum so we stay responsive.
+        _RESEND_MIN_SLEEP = 0.25
+        _RESEND_MAX_SLEEP = 8.0
+        loop_sleep = _RESEND_MIN_SLEEP
+
         while self._resend_running:
             try:
                 due = storage.load_due_outbox(limit=200)
+                any_ok = False
                 for item in due:
                     msg_blob = item.get("msg", {})
                     if not msg_blob:
@@ -317,15 +326,27 @@ class MessageServer:
                     )
                     if ok:
                         storage.mark_outbox_delivered(item.get("msg_id", ""))
+                        any_ok = True
                     else:
                         storage.incr_counter("metrics.delivery_retry_total", 1.0)
                         attempts = int(item.get("attempts", 0)) + 1
                         next_retry = time.time() + min(60.0, self.retry_backoff_base * (2 ** min(attempts, 8)))
                         status = "pending" if attempts < max(3, self.max_retries * 3) else "failed"
                         storage.mark_outbox_attempt(item.get("msg_id", ""), attempts, next_retry, status)
+
+                # Back off when there is nothing to do or everything failed;
+                # reset to minimum as soon as a message gets through.
+                if any_ok:
+                    loop_sleep = _RESEND_MIN_SLEEP
+                elif not due:
+                    loop_sleep = min(loop_sleep * 2, _RESEND_MAX_SLEEP)
+                # Add a small random jitter (±20 %) to spread load after a
+                # restart when many messages may become due simultaneously.
+                jitter = loop_sleep * 0.2 * (2 * random.random() - 1)
+                time.sleep(max(_RESEND_MIN_SLEEP, loop_sleep + jitter))
             except Exception as e:
                 logger.debug(f"Resend loop error: {e}")
-            time.sleep(0.25)
+                time.sleep(loop_sleep)
 
     def _restore_pending_inbox_once(self):
         pending = storage.load_pending_inbox(limit=500)

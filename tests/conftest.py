@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,10 @@ def tmp_workspace(monkeypatch):
     monkeypatch.setattr("core.file_transfer.DOWNLOADS_DIR", downloads, raising=False)
     monkeypatch.setattr("core.storage._base_dir", lambda: data_dir, raising=False)
     monkeypatch.setattr("core.storage._CONN", None, raising=False)
+    # Reset the connection lock so workers from a previous test cannot block
+    # a fresh _connect() call in the same process (e.g. under pytest-xdist
+    # with --looponfail or when tests share a process).
+    monkeypatch.setattr("core.storage._CONN_LOCK", threading.RLock(), raising=False)
 
     def _history_path():
         return os.path.join(data_dir, "chat_history.jsonl")

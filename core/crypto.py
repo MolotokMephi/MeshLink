@@ -12,6 +12,7 @@ import base64
 import hashlib
 import secrets
 import logging
+import threading
 import time
 from typing import Optional
 
@@ -147,6 +148,10 @@ class CryptoManager:
         self.keypair     = KeyPair()        # X25519 for ECDH
         self.signing_key = SigningKey()     # Ed25519 for signatures
 
+        # Protects all mutable session state below so that rotate_session and
+        # maintain_sessions are safe to call from different threads.
+        self._session_lock = threading.Lock()
+
         # peer_id → AES-GCM cipher (from X25519 exchange)
         self._sessions:         dict[str, SessionCipher] = {}
         # peer_id → lifecycle metadata for E2E sessions
@@ -180,10 +185,17 @@ class CryptoManager:
         Derive a shared AES-GCM key via X25519 and store the session.
         Optionally register the peer's Ed25519 signing public key.
         """
+        # Derive the key *outside* the lock — it is CPU-heavy but stateless.
         try:
             peer_pub = base64.b64decode(peer_public_b64)
             shared   = self.keypair.derive_shared_key(peer_pub)
-            self._sessions[peer_id] = SessionCipher(shared)
+            new_cipher = SessionCipher(shared)
+        except Exception as e:
+            logger.error(f"Session establishment failed for {peer_id}: {e}")
+            return
+
+        with self._session_lock:
+            self._sessions[peer_id] = new_cipher
             now = time.time()
             prev = self._session_meta.get(peer_id) or {}
             self._session_meta[peer_id] = {
@@ -196,10 +208,7 @@ class CryptoManager:
                 "expired": False,
             }
             self._session_peer_pub_b64[peer_id] = peer_public_b64
-            logger.info(f"E2E session established with {peer_id}")
-        except Exception as e:
-            logger.error(f"Session establishment failed for {peer_id}: {e}")
-            return
+        logger.info(f"E2E session established with {peer_id}")
 
         if peer_signing_b64:
             self.register_peer_signing_key(peer_id, peer_signing_b64)
@@ -212,12 +221,14 @@ class CryptoManager:
             logger.warning(f"Failed to register signing key for {peer_id}: {e}")
 
     def has_session(self, peer_id: str) -> bool:
-        return peer_id in self._sessions
+        with self._session_lock:
+            return peer_id in self._sessions
 
     def touch_session(self, peer_id: str):
-        meta = self._session_meta.get(peer_id)
-        if meta:
-            meta["last_used"] = time.time()
+        with self._session_lock:
+            meta = self._session_meta.get(peer_id)
+            if meta:
+                meta["last_used"] = time.time()
 
     def _is_session_expired(self, peer_id: str, now: Optional[float] = None) -> bool:
         meta = self._session_meta.get(peer_id)
@@ -255,32 +266,56 @@ class CryptoManager:
         return (now_ts - last_rotated) >= interval
 
     def rotate_session(self, peer_id: str) -> bool:
-        """Safely rotates session using last known remote X25519 public key."""
-        peer_public_b64 = self._session_peer_pub_b64.get(peer_id)
-        if not peer_public_b64:
-            return False
-        prev_created = float((self._session_meta.get(peer_id) or {}).get("created_at", time.time()))
+        """Safely rotates session using last known remote X25519 public key.
+
+        The entire read-of-created_at → establish → restore-created_at sequence
+        is executed while holding _session_lock so no other thread can observe
+        the intermediate state where created_at has been reset by
+        establish_session to time.time().
+        """
+        with self._session_lock:
+            peer_public_b64 = self._session_peer_pub_b64.get(peer_id)
+            if not peer_public_b64:
+                return False
+            prev_created = float(
+                (self._session_meta.get(peer_id) or {}).get("created_at", time.time())
+            )
+
+        # establish_session acquires _session_lock internally; release ours
+        # first to avoid a potential deadlock if it is ever called from a path
+        # that already holds a different lock.
         self.establish_session(peer_id, peer_public_b64)
-        meta = self._session_meta.get(peer_id)
-        if meta:
-            meta["created_at"] = prev_created
-            meta["expired"] = False
-        return peer_id in self._sessions
+
+        with self._session_lock:
+            meta = self._session_meta.get(peer_id)
+            if meta:
+                # Restore original creation timestamp so session TTL is
+                # measured from when the session was first established, not
+                # from when the last key rotation happened.
+                meta["created_at"] = prev_created
+                meta["expired"] = False
+            return peer_id in self._sessions
 
     def maintain_sessions(self) -> dict:
         """TTL/rotation maintenance for all known E2E sessions."""
         now = time.time()
         expired: list[str] = []
+        to_rotate: list[str] = []
+
+        with self._session_lock:
+            for peer_id in list(self._sessions.keys()):
+                if self._is_session_expired(peer_id, now=now):
+                    self._sessions.pop(peer_id, None)
+                    meta = self._session_meta.get(peer_id)
+                    if meta:
+                        meta["expired"] = True
+                    expired.append(peer_id)
+                elif self.should_rotate_session(peer_id, now=now):
+                    to_rotate.append(peer_id)
+
         rotated: list[str] = []
-        for peer_id in list(self._sessions.keys()):
-            if self._is_session_expired(peer_id, now=now):
-                self._sessions.pop(peer_id, None)
-                meta = self._session_meta.get(peer_id)
-                if meta:
-                    meta["expired"] = True
-                expired.append(peer_id)
-                continue
-            if self.should_rotate_session(peer_id, now=now) and self.rotate_session(peer_id):
+        for peer_id in to_rotate:
+            if self.rotate_session(peer_id):
                 rotated.append(peer_id)
         return {"expired": expired, "rotated": rotated}
 

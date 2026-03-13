@@ -16,7 +16,10 @@ from typing import Dict, List, Optional
 
 _DB_LOCK = threading.RLock()
 _CONN: Optional[sqlite3.Connection] = None
-_CONN_LOCK = threading.Lock()
+# RLock prevents deadlock when _connect() is called re-entrantly (e.g. from a
+# SQLite callback or any storage helper that is invoked while the lock is already
+# held by the same thread during schema initialisation).
+_CONN_LOCK = threading.RLock()
 
 
 def _safe_name(name: str) -> str:
@@ -165,6 +168,7 @@ def enforce_db_limits(max_db_mb: int = 128, max_chat_rows: int = 200000):
                     )
                 conn.commit()
 
+        needs_vacuum = False
         try:
             p = db_path()
             if os.path.exists(p):
@@ -180,7 +184,16 @@ def enforce_db_limits(max_db_mb: int = 128, max_chat_rows: int = 200000):
                         "DELETE FROM delivery_state WHERE msg_id IN (SELECT msg_id FROM delivery_state ORDER BY updated_at ASC LIMIT (SELECT CAST(COUNT(*)*0.1 AS INT) FROM delivery_state))"
                     )
                     conn.commit()
-                    conn.execute("VACUUM")
+                    needs_vacuum = True
+        except Exception:
+            pass
+
+    # VACUUM requires an exclusive SQLite lock and can take seconds on large
+    # databases.  Run it outside _DB_LOCK so other writer threads are not
+    # blocked for the full duration.
+    if needs_vacuum:
+        try:
+            conn.execute("VACUUM")
         except Exception:
             pass
 

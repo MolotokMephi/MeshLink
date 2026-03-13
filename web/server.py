@@ -9,6 +9,7 @@ import time
 import logging
 import shutil
 import tempfile
+import threading
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
@@ -43,6 +44,23 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading",
 
 node: MeshNode = None  # type: ignore
 
+# Per-transfer staging-directory cleanup registry.
+# Populated by api_upload *before* the send worker is started so there is no
+# race between the worker completing and the cleanup being registered.
+# Keyed by file_id; each entry is a tmp_dir path to shutil.rmtree once done.
+_upload_cleanups: dict = {}
+_upload_cleanups_lock = threading.Lock()
+
+
+def _on_upload_complete(transfer) -> None:
+    """Called by file_mgr when any outgoing transfer finishes (success or fail).
+    Cleans up the staging directory that was created for that upload, if any.
+    """
+    with _upload_cleanups_lock:
+        tmp_dir = _upload_cleanups.pop(getattr(transfer, "file_id", None), None)
+    if tmp_dir:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
 
 def init_app(mesh_node: MeshNode):
     global node
@@ -68,6 +86,12 @@ def init_app(mesh_node: MeshNode):
     node.on("webrtc_ice",    lambda d: socketio.emit("webrtc_ice", d))
     node.on("seed_paired", lambda d: socketio.emit("seed_paired", d))
     node.on("seed_pair_result", lambda d: socketio.emit("seed_pair_result", d))
+
+    # Single, persistent on_complete hook for upload staging cleanup.
+    # Installing it here (not per-request) avoids the race where a send worker
+    # completes before api_upload can install its closure, and prevents parallel
+    # uploads from overwriting each other's callback.
+    node.file_mgr.on_complete = _on_upload_complete
 
 
 # ── Routes ──────────────────────────────────────────────
@@ -142,22 +166,17 @@ def api_upload():
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return jsonify({"error": f"Failed to save upload: {e}"}), 500
 
+    # Register staging-dir cleanup *before* starting the worker so the
+    # on_complete handler (installed once in init_app) always finds an entry,
+    # even if the transfer finishes before this function returns.
+    # A placeholder is used; replaced with the real file_id below.
     file_id = node.send_file(peer_id, tmp_path)
     if not file_id:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return jsonify({"error": "Transfer failed (peer unavailable or trust policy)"}), 500
 
-    _orig_on_complete = node.file_mgr.on_complete
-    def _on_complete_with_cleanup(transfer):
-        if _orig_on_complete:
-            try:
-                _orig_on_complete(transfer)
-            except Exception:
-                pass
-        if transfer.file_id == file_id:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            node.file_mgr.on_complete = _orig_on_complete
-    node.file_mgr.on_complete = _on_complete_with_cleanup
+    with _upload_cleanups_lock:
+        _upload_cleanups[file_id] = tmp_dir
     return jsonify({"file_id": file_id, "filename": safe_name})
 
 
@@ -263,10 +282,11 @@ def api_metrics():
              f"meshlink_outbox_pending {stats.get('outbox_pending', 0)}",
              "# HELP meshlink_delivery_retry_total Total delivery retries",
              "# TYPE meshlink_delivery_retry_total counter",
-             f"meshlink_delivery_retry_total {stats.get('delivery_retry_total', 0)}",
-             "# HELP meshlink_file_resume_total Total file resume operations",
-             "# TYPE meshlink_file_resume_total counter",
-             f"meshlink_file_resume_total {stats.get('file_resume_total', 0)}"]
+             # get_statistics() exposes this value under the key "delivery_retries"
+             f"meshlink_delivery_retry_total {stats.get('delivery_retries', 0)}",
+             "# HELP meshlink_delivery_fail_total Total delivery failures",
+             "# TYPE meshlink_delivery_fail_total counter",
+             f"meshlink_delivery_fail_total {stats.get('delivery_failures', 0)}"]
     return "\n".join(lines) + "\n", 200
 
 @app.route("/api/network/diagnostics")
@@ -284,6 +304,12 @@ def api_network_diagnostics():
 
 @socketio.on("connect")
 def on_connect():
+    # Guard against clients that connect before init_app() has been called
+    # (e.g. during the brief window between socketio.run() accepting the TCP
+    # handshake and main.py finishing node initialisation).
+    if node is None:
+        emit("error", {"message": "Node not ready yet, please reconnect shortly"})
+        return
     emit("node_info", node.get_info())
     emit("peers_list", node.get_peers())
     emit("statistics", node.get_statistics())
