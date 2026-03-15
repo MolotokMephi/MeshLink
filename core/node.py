@@ -44,24 +44,40 @@ logger = logging.getLogger("meshlink.node")
 
 
 class _LRUSet:
-    def __init__(self, max_size: int):
+    """LRU deduplication set with optional TTL-based expiry.
+
+    Combining size-based eviction with time-based expiry prevents old msg_ids
+    from being permanently evicted under high relay load, which could otherwise
+    let replayed messages slip through again.
+    """
+
+    def __init__(self, max_size: int, ttl_seconds: float = 300.0):
         self._max   = max_size
+        self._ttl   = ttl_seconds
+        # Values are insertion timestamps for TTL checks.
         self._store: collections.OrderedDict = collections.OrderedDict()
         self._lock  = threading.Lock()
 
     def contains(self, key: str) -> bool:
         with self._lock:
-            if key in self._store:
-                self._store.move_to_end(key)
-                return True
-            return False
+            if key not in self._store:
+                return False
+            if time.time() - self._store[key] > self._ttl:
+                # Entry expired — treat as unseen so we don't block future
+                # legitimate messages with the same id after a long gap.
+                del self._store[key]
+                return False
+            self._store.move_to_end(key)
+            return True
 
     def add(self, key: str):
         with self._lock:
+            now = time.time()
             if key in self._store:
+                self._store[key] = now
                 self._store.move_to_end(key)
                 return
-            self._store[key] = True
+            self._store[key] = now
             if len(self._store) > self._max:
                 self._store.popitem(last=False)
 
@@ -290,6 +306,7 @@ class MeshNode:
 
         self.file_mgr.on_progress = self._on_file_progress
         self.file_mgr.on_complete = self._on_file_complete
+        self.file_mgr.is_sender_trusted = self.crypto.is_trusted
 
     def _on_delivery_status(self, data: dict):
         peer_id = data.get("peer_id", "")
@@ -346,6 +363,7 @@ class MeshNode:
         self.file_mgr.stop()
         self.msg_server.stop()
         self.discovery.stop()
+        storage.close()
         logger.info("MeshLink stopped.")
 
     def _stats_loop(self):
@@ -576,6 +594,9 @@ class MeshNode:
         for peer_dict in peers:
             pid = peer_dict["peer_id"]
             if pid in already_visited or pid == msg.sender_id:
+                continue
+            # Only relay to trusted peers to preserve the trust model.
+            if not self.crypto.is_trusted(pid):
                 continue
             peer = self.discovery.get_peer(pid)
             if peer:
@@ -858,6 +879,7 @@ class MeshNode:
         latency_count = float(counters.get("metrics.delivery_latency_count", 0.0))
         retry_total = float(counters.get("metrics.delivery_retry_total", 0.0))
         fail_total = float(counters.get("metrics.delivery_fail_total", 0.0))
+        file_resume_total = float(counters.get("metrics.file_resume_total", 0.0))
 
         return {
             # Network
@@ -887,6 +909,7 @@ class MeshNode:
             # File transfers
             "active_file_sends": int(sends.get("active_sends", 0)),
             "file_send_slots": int(sends.get("max_active_sends", 0)),
+            "file_resume_total": int(file_resume_total),
 
             # Media (from UDP engine)
             "media_uplink_kbps": round(float(media.get("uplink_bitrate_kbps", 0.0)), 1),

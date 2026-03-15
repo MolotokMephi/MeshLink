@@ -70,14 +70,26 @@ class TransferInfo:
 
 
 def _recv_line(sock: socket.socket, max_len: int = 65536) -> bytes:
+    """Read a newline-terminated line from *sock*.
+
+    Uses 4 KiB block reads instead of per-byte recv() calls, reducing
+    syscall count from O(N) to O(N/4096).  Safe for the MeshLink file-
+    transfer protocol because every line exchange is followed by a network
+    round-trip before any subsequent binary data is written.
+    """
     buf = b""
-    while len(buf) < max_len:
-        b = sock.recv(1)
-        if not b:
+    block = 4096
+    while len(buf) <= max_len:
+        chunk = sock.recv(block)
+        if not chunk:
             raise ConnectionError("Connection closed while reading line")
-        if b == b"\n":
+        nl = chunk.find(b"\n")
+        if nl != -1:
+            buf += chunk[:nl]
+            if len(buf) > max_len:
+                raise ValueError("Line too long")
             return buf
-        buf += b
+        buf += chunk
     raise ValueError("Line too long")
 
 
@@ -91,6 +103,10 @@ class FileTransferManager:
         self.on_progress: Optional[Callable] = None
         self.on_complete: Optional[Callable] = None
         self.on_file_received: Optional[Callable] = None
+        # Optional trust gate: (sender_id: str) -> bool.  When set, incoming
+        # transfers from untrusted senders are rejected before any data is
+        # written to disk.
+        self.is_sender_trusted: Optional[Callable] = None
         self.max_retries = 4
         self.retry_backoff_base = 0.5
         self.max_active_sends = 4
@@ -241,6 +257,13 @@ class FileTransferManager:
             resume_enabled = bool(header.get("resume", True))
 
             logger.info(f"Incoming file: {filename} ({filesize} B) from {sender_name}")
+
+            # Reject immediately if the sender is not trusted — before writing
+            # anything to disk to prevent a LAN attacker from filling storage.
+            if self.is_sender_trusted is not None and not self.is_sender_trusted(sender_id):
+                logger.warning(f"Rejected file from untrusted sender: {sender_id!r}")
+                sock.sendall(json.dumps({"status": "rejected"}).encode() + b"\n")
+                return
 
             if filesize > MAX_FILE_SIZE:
                 sock.sendall(json.dumps({"status": "rejected"}).encode() + b"\n")
@@ -400,6 +423,14 @@ class FileTransferManager:
             if remote_sha and remote_sha != local_sha:
                 logger.warning(f"Checksum mismatch: {filename}")
                 transfer.status = "checksum_error"
+                # Clean up the corrupt partial file and its manifest so it
+                # doesn't persist indefinitely (TTL cleanup is up to 24 h).
+                try:
+                    if os.path.exists(part_path):
+                        os.remove(part_path)
+                except Exception:
+                    pass
+                self._remove_manifest(file_id)
                 if self.on_progress:
                     self.on_progress(transfer)
                 return

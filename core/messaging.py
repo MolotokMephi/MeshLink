@@ -6,6 +6,7 @@ mesh relay, and seed-pairing handshakes.
 
 import os
 import json
+import select
 import time
 import struct
 import socket
@@ -393,10 +394,16 @@ class MessageServer:
 
     def _handle_client(self, sock: socket.socket, addr):
         logger.debug(f"Incoming TCP connection from {addr[0]}")
-        sock.settimeout(30)
+        # Do NOT call sock.settimeout() on the shared socket: settimeout() is a
+        # global socket option that affects both reads *and* writes, so it
+        # would race with concurrent send_to_peer calls on the same socket.
+        # Use select() for read-readiness with a per-iteration timeout instead.
         try:
             while self._running:
                 try:
+                    ready, _, _ = select.select([sock], [], [], 30)
+                    if not ready:
+                        continue  # no data within 30 s; re-check _running
                     msg = recv_message(sock)
                     # Store connection for replies
                     with self._lock:
@@ -448,8 +455,6 @@ class MessageServer:
                     self._emit(msg)
                     if msg.msg_type == MsgType.TEXT:
                         storage.mark_inbox_processed(msg.msg_id)
-                except socket.timeout:
-                    continue
                 except (ConnectionError, ConnectionResetError):
                     break
         except Exception as e:

@@ -433,6 +433,23 @@ def outbox_pending_count() -> int:
     return int(row["c"])
 
 
+def close():
+    """Flush WAL and close the database connection cleanly.
+
+    Should be called during graceful shutdown so that any pending WAL pages
+    are checkpointed into the main database file before the process exits.
+    """
+    global _CONN
+    with _CONN_LOCK:
+        if _CONN is not None:
+            try:
+                _CONN.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                _CONN.close()
+            except Exception:
+                pass
+            _CONN = None
+
+
 def incr_counter(key: str, delta: float = 1.0):
     conn = _connect()
     with _DB_LOCK:

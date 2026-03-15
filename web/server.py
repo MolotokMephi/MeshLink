@@ -9,6 +9,7 @@ import time
 import logging
 import shutil
 import tempfile
+from typing import Dict
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
@@ -43,6 +44,11 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading",
 
 node: MeshNode = None  # type: ignore
 
+# Maps file_id -> staging tmp_dir for uploads that are still in-flight.
+# Cleaned up from a single on("file_complete") handler to avoid the
+# per-upload callback-replacement race (Bug #2).
+_upload_cleanups: Dict[str, str] = {}
+
 
 def init_app(mesh_node: MeshNode):
     global node
@@ -68,6 +74,17 @@ def init_app(mesh_node: MeshNode):
     node.on("webrtc_ice",    lambda d: socketio.emit("webrtc_ice", d))
     node.on("seed_paired", lambda d: socketio.emit("seed_paired", d))
     node.on("seed_pair_result", lambda d: socketio.emit("seed_pair_result", d))
+
+    # Single handler that cleans up staging directories for completed uploads.
+    # Registered once here instead of replacing file_mgr.on_complete per-upload,
+    # which caused a race when two uploads ran in parallel (Bug #2).
+    def _on_upload_file_complete(data):
+        fid = data.get("file_id") if isinstance(data, dict) else None
+        if fid and fid in _upload_cleanups:
+            tmp_dir = _upload_cleanups.pop(fid)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    node.on("file_complete", _on_upload_file_complete)
 
 
 # ── Routes ──────────────────────────────────────────────
@@ -147,17 +164,11 @@ def api_upload():
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return jsonify({"error": "Transfer failed (peer unavailable or trust policy)"}), 500
 
-    _orig_on_complete = node.file_mgr.on_complete
-    def _on_complete_with_cleanup(transfer):
-        if _orig_on_complete:
-            try:
-                _orig_on_complete(transfer)
-            except Exception:
-                pass
-        if transfer.file_id == file_id:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            node.file_mgr.on_complete = _orig_on_complete
-    node.file_mgr.on_complete = _on_complete_with_cleanup
+    # Register staging directory for cleanup when the transfer completes.
+    # The actual cleanup is done by the single _on_upload_file_complete handler
+    # registered in init_app(), avoiding the per-upload on_complete replacement
+    # race that occurred when two uploads ran concurrently.
+    _upload_cleanups[file_id] = tmp_dir
     return jsonify({"file_id": file_id, "filename": safe_name})
 
 
@@ -263,7 +274,7 @@ def api_metrics():
              f"meshlink_outbox_pending {stats.get('outbox_pending', 0)}",
              "# HELP meshlink_delivery_retry_total Total delivery retries",
              "# TYPE meshlink_delivery_retry_total counter",
-             f"meshlink_delivery_retry_total {stats.get('delivery_retry_total', 0)}",
+             f"meshlink_delivery_retry_total {stats.get('delivery_retries', 0)}",
              "# HELP meshlink_file_resume_total Total file resume operations",
              "# TYPE meshlink_file_resume_total counter",
              f"meshlink_file_resume_total {stats.get('file_resume_total', 0)}"]
