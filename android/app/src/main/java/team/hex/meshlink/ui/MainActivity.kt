@@ -81,6 +81,7 @@ class MainActivity : ComponentActivity() {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             needed += Manifest.permission.POST_NOTIFICATIONS
+            needed += Manifest.permission.NEARBY_WIFI_DEVICES
         }
         val missing = needed.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED

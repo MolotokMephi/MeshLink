@@ -1,6 +1,5 @@
 package team.hex.meshlink.crypto
 
-import android.util.Base64
 import org.bouncycastle.crypto.agreement.X25519Agreement
 import org.bouncycastle.crypto.generators.X25519KeyPairGenerator
 import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
@@ -105,6 +104,8 @@ object Crypto {
         }
     }
 
-    fun b64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
-    fun unb64(s: String): ByteArray = Base64.decode(s, Base64.NO_WRAP)
+    private val b64Encoder = java.util.Base64.getEncoder().withoutPadding()
+    private val b64Decoder = java.util.Base64.getDecoder()
+    fun b64(bytes: ByteArray): String = b64Encoder.encodeToString(bytes)
+    fun unb64(s: String): ByteArray = b64Decoder.decode(s)
 }

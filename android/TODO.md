@@ -1,116 +1,138 @@
 # MeshLink Android — оставшиеся задачи
 
-Эта ветка (`claude/android-bluetooth-mesh-YpZU6`) содержит **MVP-скелет**
-Android-клиента: identity-крипто, mesh-роутер с TTL/dedup/relay,
-BLE-транспорт (GATT-сервер + клиент + advertise/scan + фрагментация),
-foreground-сервис, Room-хранилище и Compose UI с двумя экранами.
+С момента MVP закрыты все P0/P1 пункты прошлой версии TODO. Текущий
+скоп ниже — то, что нужно для production-grade офлайн-мессенджера.
 
-Чего не успел / что нужно доделать перед тем, как ставить на устройство и
-заявлять «полноценный mesh»:
+## Завершено в этой ветке
 
-## P0 — прежде чем впервые компилировать
+- ✅ Multi-transport архитектура (`Transport` интерфейс, BLE + LAN
+  multicast + Wi-Fi Direct foundations).
+- ✅ MTU-aware фрагментация per-link, очередь записи с retry,
+  cap=5 одновременных GATT-линков, exponential backoff на reconnect.
+- ✅ Persistent seen-cache в Room (`seen_msgs`), миграция v1→v2.
+- ✅ Outbox + ack/retry с exponential backoff (Room `outbox`).
+- ✅ Anti-replay: timestamp window ±5min, nonce window per-sender (64).
+- ✅ Loop-detect через relay_path; per-sender token bucket
+  (rate 16 msg/s, burst 64).
+- ✅ Android Keystore-wrapping приватных ключей (legacy v1 layout
+  мигрируется при первом старте).
+- ✅ File transfer (OFFER / ACCEPT / CHUNK / COMPLETE + SHA-256 + resume).
+- ✅ Group chats (shared-key AES-GCM, GROUP_INVITE через 1:1).
+- ✅ Out-of-band peer pairing (`meshlink:1:<base64>` строка).
+- ✅ Read receipts (encrypted) + typing indicator messages.
+- ✅ Compose UI: peer list, group list, chat (с delivery-state ✓✓/read),
+  pairing screen, attach-file через ActivityResult.
+- ✅ Unit tests: Fragmentation roundtrip, Crypto sign/verify/ECDH,
+  MeshMessage canonical signing across relay mutations.
+- ✅ GitHub Actions CI: assembleDebug + lintDebug + testDebugUnitTest +
+  upload APK + lint report.
 
-- [ ] **Сгенерировать Gradle Wrapper.** В репо нет `gradlew`, `gradlew.bat` и
-      `gradle/wrapper/gradle-wrapper.{jar,properties}`. Сделать один раз:
-      `cd android && gradle wrapper --gradle-version 8.7`. Закоммитить
-      сгенерированные файлы.
-- [ ] **Проверить сборку:** `./gradlew :app:assembleDebug`. Скорее всего
-      придётся обновить версии Compose BOM / KSP под ту версию AGP, что
-      установлена локально.
-- [ ] **Иконка приложения.** Сейчас `android:icon`/`roundIcon` убраны из
-      манифеста (используется системная). Для релиза добавить
-      `mipmap-*/ic_launcher.*` (можно сгенерить через Image Asset Studio).
-- [ ] **Минимальные unit-тесты** для `Fragmentation` (split↔Reassembler) и
-      `MeshMessage.verifyWith` — это самые «легко тестируемые в JVM» куски,
-      они дают быстрый регресс-набор.
+## P1 — критичные доработки до прод-релиза
 
-## P1 — функциональные пробелы относительно Python-ядра
+### Wi-Fi Direct follow-ups
+- [ ] **BroadcastReceiver state machine.** В `WifiDirectTransport.start()`
+      сейчас только TCP-listener; нет регистрации
+      `WIFI_P2P_PEERS_CHANGED_ACTION` / `WIFI_P2P_CONNECTION_CHANGED_ACTION`,
+      нет авто-discovery через `discoverPeers()`/`requestPeers()`,
+      нет авто-connect. Нужен полноценный конечный автомат
+      idle → discovering → connecting → connected → group-owner | client.
+- [ ] **Auto-upgrade с BLE на Wi-Fi Direct** для больших передач: при
+      получении FILE_OFFER предложить upgrade-канал, согласовать роли
+      group-owner/client, передать чанки через TCP.
+- [ ] **Wi-Fi P2P-permission UX:** на API 33+ нужен runtime-grant
+      `NEARBY_WIFI_DEVICES`, на 30- — fine location.
 
-### Транспорт
-- [ ] **Переподписки и keep-alive.** Сейчас если outbound-линк отвалился, мы
-      опираемся на повторный scan-результат. Добавить экспоненциальный
-      reconnect и periodic ping (`MsgType.PING/PONG`) для таймаут-детекта.
-- [ ] **Лимит одновременных GATT-соединений.** На большинстве Android-стеков
-      одновременно открыто 4–7 GATT-соединений. Нужен LRU-эвиктор по
-      `lastSeenMs`/RSSI.
-- [ ] **MTU-aware chunk size.** В `BleTransport.broadcast` сейчас захардкожен
-      `LARGE_CHUNK_PAYLOAD = 244`. Запрашиваем MTU 517, но реально
-      используемый размер надо подхватывать из `onMtuChanged` и хранить
-      per-link.
-- [ ] **Контроль скорости.** Без backpressure GATT-стек вендоров (особенно
-      Samsung/Xiaomi) начинает дропать write-request'ы. Очередь
-      `OutboundLink.writeQueue` уже сериализована, но нужно добавить
-      retry на `onCharacteristicWrite(status != GATT_SUCCESS)`.
+### QR pairing follow-ups
+- [ ] **Реальный QR-matrix encoder.** В `pairing/Pairing.kt::QrEncoder`
+      сейчас плейсхолдер: версия выбирается, но Reed-Solomon, маски и
+      format-info не реализованы. Текстовый payload (`meshlink:1:…`) уже
+      работает копи-пастом. Добавить полноценный encoder (≈400 строк
+      математики) или мини-зависимость на `core/qrcode-kotlin`.
+- [ ] **Сканер QR.** Сейчас вход — только paste. Добавить
+      CameraX + ML Kit Barcode Scanning (или ZXing Core) и интент.
+- [ ] **NFC-pairing** через `Ndef` для устройств с NFC: запись
+      `meshlink:1:…` строки в payload, чтение через `NDEF_DISCOVERED`.
+- [ ] **Sound-pairing** (gg-wave / chirp.io) как fallback там, где нет
+      ни камеры, ни NFC, ни общей сети.
 
-### Mesh-протокол
-- [ ] **Outbox + ack/retry** (как `core/messaging.py`): сообщение считается
-      доставленным только после `DELIVERY_ACK` от получателя; до этого —
-      ретраим с backoff. Сейчас текстовые сообщения пишутся в БД сразу как
-      «отправлено», что неправда при отсутствии маршрута.
-- [ ] **Mesh-замыкания и счётчики.** Добавить `loop-detect` через
-      `relay_path` (если наш id уже там — не релеить).
-- [ ] **Антифлуд / rate-limit per sender** (есть в Python-ядре —
-      перенести). Иначе один скомпрометированный узел положит сеть.
-- [ ] **Persistent seen-cache.** Сейчас `seen` сбрасывается при
-      перезапуске сервиса; после краша возможно повторное всплытие старых
-      сообщений. Сохранять последние N msg_id в Room.
+### Forward secrecy для групп
+- [ ] **MLS / Signal Sender Keys.** Текущая `groups/Groups.kt` — один
+      статический AES-ключ на группу. При компрометации одного устройства
+      раскрываются все прошлые/будущие сообщения. Внедрить либо
+      Signal Sender Keys (per-sender ratchet) либо MLS (RFC 9420);
+      первый вариант проще, второй — стандартный.
+- [ ] **Add/remove member** с rekey: сейчас `members_csv` хранится, но
+      операций по добавлению/удалению с ротацией ключа нет.
 
-### Фичи поверх mesh
-- [ ] **Передача файлов** (порт `core/file_transfer.py`): чанки + SHA-256 +
-      resume. По BLE это будет медленно (десятки КБ/с), но рабочее.
-- [ ] **Wi-Fi Direct / Hotspot транспорт** как альтернатива BLE для
-      больших полезных нагрузок и звонков. Требует своего `Transport`-
-      адаптера и multiplexing'a в `MeshRouter` (роутер уже
-      transport-agnostic — можно добавить вторую подписку на `outgoing`).
-- [ ] **Групповые чаты.** Сейчас протокол поддерживает broadcast
-      (`recipientId == null`), но UI оперирует только 1:1. Добавить
-      понятие комнаты + AES-GCM с групповым ключом.
-- [ ] **Seed-pairing UI.** В Python-ядре есть pairing через короткий
-      seed (короткий код в воздухе) — перенести как QR-код экран.
-- [ ] **Read receipts / typing.** `MsgType.READ_RECEIPT`, `MsgType.TYPING`
-      определены в Python-ядре, в Kotlin-mesh не реализованы.
-
-### Хранилище и состояние
-- [ ] **Миграции Room.** Сейчас `version = 1` без миграций — при любом
-      изменении схемы вылетит при первом обновлении.
-- [ ] **DataStore для display name** вместо SharedPreferences (мелочь).
-- [ ] **Truncation/eviction** старых сообщений (в Python-ядре есть
-      `CHAT_DB_MAX_MB` / `CHAT_DB_MAX_ROWS`).
+### Стабильность транспорта
+- [ ] **BLE: handle WRITE_TYPE_NO_RESPONSE.** Для chat-сообщений (не
+      файлов) можно использовать write-without-response — в разы быстрее
+      и не блокирует очередь подтверждениями. Сейчас всегда DEFAULT.
+- [ ] **BLE: subscribe-driven keepalive.** Если сабскрайбер не отзывается
+      ping/pong > N секунд, дропать линк, запускать backoff.
+- [ ] **LAN: TCP fallback внутри LanTransport** для крупных payload'ов
+      (когда multicast pipe недостаточен и MTU < 1400 — на mobile-AP
+      это часто).
+- [ ] **LAN: auto-rejoin multicast group** на change-of-network
+      (`ConnectivityManager.NetworkCallback`).
+- [ ] **Wi-Fi Direct: keepalive + reconnect.** Сейчас `FrameLink` молча
+      падает при разрыве — нужна реконнект-стратегия с heartbeat.
 
 ### Безопасность
-- [ ] **Android Keystore.** Сейчас Ed25519/X25519 приватные ключи лежат в
-      SharedPreferences в base64 — допустимо для MVP, но для прод нужно
-      хранить master-ключ в Keystore и шифровать им identity-blob.
-- [ ] **Подписать ANNOUNCE с anti-replay.** В тело announce включить
-      `nonce` и/или временную метку с допуском, чтобы нельзя было
-      воспроизвести старый announce.
-- [ ] **Blacklist/ban.** Соответствует rate-limit задаче выше.
+- [ ] **Identity recovery.** Если Keystore-ключ утерян (factory reset
+      без бэкапа), идентичность теряется навсегда. Добавить экспорт
+      mnemonic-фразы по BIP39 через KDF из identity.
+- [ ] **Per-recipient session ratchet** (Double Ratchet) вместо чистого
+      ECDH — даст forward secrecy для 1:1 чатов.
+- [ ] **Trust-on-first-use markers.** Сейчас `peers.trusted = false` для
+      announce-обнаруженных, `true` для pairing. UI должен явно различать
+      «случайный сосед» и «доверенный контакт» и предупреждать о
+      смене edPub под тем же display name.
+- [ ] **Rate-limit storms.** Вместо silent-drop при превышении
+      bucket-rate — временный ban (на 30s/5min), как в Python-ядре
+      `core/security`.
+- [ ] **Outbox: подпись retry-envelope с актуальным timestamp.** Сейчас
+      retry шлёт исходный envelope с прежним timestamp; через 5 минут он
+      будет дропаться по anti-replay window. Нужно при retry
+      переподписывать envelope с новым timestamp+nonce.
 
 ### UX
-- [ ] **Экран онбординга:** запросить разрешения дружелюбно, объяснить
-      зачем нужен Bluetooth в фоне; на Android 12+ — флоу
-      «не выводить из энергосбережения».
-- [ ] **Имя устройства** настраивается, но в UI нет экрана настроек.
-- [ ] **Индикатор живых линков.** В UI peer-list нет различия между
-      «слышали 30 секунд назад через mesh-relay» и «прямой BLE-линк».
-- [ ] **Тёмная/светлая темы + Material You.**
+- [ ] **Onboarding-флоу:** объяснить, зачем разрешения, провести через
+      battery-optimization whitelist на не-Pixel устройствах.
+- [ ] **Settings screen:** display name, чистка истории, экспорт identity.
+- [ ] **Live-link индикатор** в peer-list: прямой BLE/LAN/WD vs «через
+      mesh-relay».
+- [ ] **Push-уведомления** на новые сообщения (через тот же
+      foreground-сервис, не FCM).
+- [ ] **Поиск по чатам** (FTS на `chat_messages.body`).
+- [ ] **Material You + dynamic colors** на API 31+.
+- [ ] **Полноценный flow выбора собеседников** для group create
+      (сейчас в UI нет экрана создания группы — только список существующих).
 
-## P2 — медиа и звонки
+## P2 — приятные мелочи
 
-- [ ] WebRTC через BLE — нереалистично (слишком узкий канал). Если хочется
-      звонки — поднимать поверх Wi-Fi Direct и делать сигналинг через
-      BLE-mesh.
+- [ ] **Voice notes / push-to-talk** через Wi-Fi Direct (Opus в
+      контейнере OGG, ~24 кбит/с).
+- [ ] **Карта последнего видения соседей** (lat/lon в локальном
+      состоянии устройства, **не** в mesh-payload).
+- [ ] **Bridge к LoRa-модулю** через USB-OTG / Bluetooth-classic для
+      километровых дальностей. Архитектурно это просто ещё один
+      `Transport`-имплементер.
+- [ ] **Веб-интерфейс по WebSocket** на самом телефоне для
+      управления с десктопа без интернета (через тот же Wi-Fi).
 
-## Известные риски / подводные камни вендоров
+## Известные риски
 
-- **Samsung/Xiaomi BLE-стеки** агрессивно дропают одновременную роль
-  peripheral+central. На старых устройствах (Android 8/9) BLE-advertising
-  может не запуститься без `BLUETOOTH_PRIVILEGED`.
-- **Doze + App Standby.** Без вайтлиста производителя сервис могут
-  убивать через 5–10 минут после блокировки экрана. Нужен
-  `BatteryOptimizations` экран и опционально `requestIgnoreBatteryOptimizations`.
-- **Android 14 (API 34) FGS-types:** мы используем `connectedDevice` —
-  работает, но с API 34 требуется `FOREGROUND_SERVICE_CONNECTED_DEVICE`
-  permission (уже добавлен в манифест).
-- **maxConnections в peripheral-роли** не управляется приложением; на
-  Pixel это обычно 4–7, но протокол должен корректно деградировать.
+- **Vendor BLE quirks.** Samsung/Xiaomi агрессивно режут одновременные
+  peripheral+central; на API 31+ при отсутствии `BLUETOOTH_PRIVILEGED`
+  advertising может молча не запуститься. Нужно вендор-матричное
+  тестирование.
+- **Doze + App Standby** на не-Pixel убивают FGS через 5–10 минут после
+  блокировки экрана. Без runtime запроса
+  `requestIgnoreBatteryOptimizations` mesh не выживет ночь.
+- **Multicast filtering** на старых Android-роутерах. Hotspot Pixel
+  фильтрует мультикаст между клиентами по умолчанию — нужен fallback на
+  255.255.255.255 broadcast.
+- **Wi-Fi Direct + STA одновременно.** На большинстве устройств Wi-Fi
+  Direct отключает обычное Wi-Fi на время сессии. UX должен это
+  объяснять.

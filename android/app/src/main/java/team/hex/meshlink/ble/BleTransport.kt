@@ -29,31 +29,39 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import team.hex.meshlink.transport.Transport
+import team.hex.meshlink.transport.TransportState
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.min
 
 /**
- * BLE peer-to-peer transport.
+ * BLE peer-to-peer transport. Each device acts simultaneously as:
  *
- * Each device acts as BOTH:
- *   - Peripheral (GATT server) advertising the MeshLink service UUID. Other
- *     peers discover us via scan and connect; they write fragmented frames to
+ *   - **Peripheral (GATT server)** advertising the MeshLink service UUID.
+ *     Centrals discover us via scan, write fragmented frames to
  *     CHAR_WRITE_UUID and subscribe to notifications on CHAR_NOTIFY_UUID.
- *   - Central (GATT client) scanning for peers advertising the service UUID
- *     and connecting outbound to fan out our frames.
+ *   - **Central (GATT client)** scanning for the service UUID and
+ *     connecting outbound to fan our frames out to peripherals.
  *
- * Frames are pre-fragmented by [Fragmentation] before transmission and
- * reassembled on the receiving side; reassembled frames are emitted on
- * [incoming] and consumed by the MeshRouter.
- *
- * Outbound broadcasting is "send to every connected link". The MeshRouter
- * has already dedup'd and TTL-managed the message; we just push bytes.
+ * Concrete robustness over the MVP:
+ *   - per-link MTU is tracked and chunk sizes are derived from it
+ *   - outbound write queue is serialized per link with retry on failure
+ *   - connection count is capped (LRU-evict oldest) to avoid overloading
+ *     vendor BLE stacks (typically 4–7 simultaneous GATT links)
+ *   - failed outbound connects use exponential backoff before reconnect
  */
-class BleTransport(private val context: Context) {
+class BleTransport(private val context: Context) : Transport {
 
+    override val name: String get() = "ble"
     private val tag = "BleTransport"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -64,57 +72,73 @@ class BleTransport(private val context: Context) {
     private var gattServer: BluetoothGattServer? = null
     private var notifyChar: BluetoothGattCharacteristic? = null
 
-    // Devices currently subscribed to our notify characteristic (centrals
-    // connected to us). We deliver outbound frames to them via notify().
+    // Centrals connected to our GATT server, with their negotiated MTU.
     private val subscribers = ConcurrentHashMap<String, BluetoothDevice>()
-
-    // Outbound BLE clients (we are central) keyed by remote address.
-    private val outboundLinks = ConcurrentHashMap<String, OutboundLink>()
-
-    // Per-link reassembly buffers.
+    private val serverSideMtu = ConcurrentHashMap<String, Int>()
     private val reassemblersServerSide = ConcurrentHashMap<String, Reassembler>()
 
+    // Outbound (we as central) links keyed by remote BLE address, ordered
+    // by recency for LRU eviction when we hit MAX_OUTBOUND_LINKS.
+    private val outboundLinks = LinkedHashMap<String, OutboundLink>()
+    private val outboundLock = Any()
+
+    // Per-address backoff state for outbound reconnects.
+    private val backoff = ConcurrentHashMap<String, BackoffState>()
+
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
-    val incoming: SharedFlow<ByteArray> = _incoming.asSharedFlow()
+    override val incoming: SharedFlow<ByteArray> = _incoming.asSharedFlow()
+
+    private val _state = MutableStateFlow(TransportState.Stopped)
+    override val state: StateFlow<TransportState> = _state.asStateFlow()
+
+    override val liveLinkCount: Int
+        get() = synchronized(outboundLock) { outboundLinks.size } + subscribers.size
 
     @Volatile private var advertising = false
     @Volatile private var scanning = false
 
     fun isReady(): Boolean = adapter != null && adapter.isEnabled && hasPermissions()
 
-    fun start() {
+    override fun start() {
+        if (_state.value == TransportState.Running) return
         if (!isReady()) {
             Log.w(tag, "BLE not ready (adapter null/off or missing permissions)")
+            _state.value = TransportState.Failed
             return
         }
+        _state.value = TransportState.Starting
         startGattServer()
         startAdvertising()
         startScanning()
+        _state.value = TransportState.Running
     }
 
-    fun stop() {
+    override fun stop() {
+        if (_state.value == TransportState.Stopped) return
         stopAdvertising()
         stopScanning()
-        outboundLinks.values.forEach { it.close() }
-        outboundLinks.clear()
-        subscribers.clear()
-        reassemblersServerSide.clear()
-        runCatching {
-            requirePerms { gattServer?.close() }
+        synchronized(outboundLock) {
+            outboundLinks.values.forEach { it.close() }
+            outboundLinks.clear()
         }
+        subscribers.clear()
+        serverSideMtu.clear()
+        reassemblersServerSide.clear()
+        runCatching { requirePerms { gattServer?.close() } }
         gattServer = null
+        scope.cancel()
+        _state.value = TransportState.Stopped
     }
 
-    /** Broadcast a logical frame to all currently-connected peers. */
-    fun broadcast(frame: ByteArray) {
+    override fun broadcast(frame: ByteArray) {
         val msgId = (System.nanoTime() and 0xFFFF).toInt()
-        // Pick the more conservative chunk size for cross-stack reliability.
-        val chunks = Fragmentation.split(frame, BleConstants.LARGE_CHUNK_PAYLOAD, msgId)
-        // Push to every central subscribed to our notify characteristic.
         val notifyCh = notifyChar
         val server = gattServer
         if (notifyCh != null && server != null) {
-            for (device in subscribers.values) {
+            for ((addr, device) in subscribers) {
+                val mtu = serverSideMtu[addr] ?: BleConstants.DEFAULT_MTU
+                val chunkSize = chunkPayloadFor(mtu)
+                val chunks = Fragmentation.split(frame, chunkSize, msgId)
                 for (chunk in chunks) {
                     runCatching {
                         requirePerms {
@@ -126,10 +150,19 @@ class BleTransport(private val context: Context) {
                 }
             }
         }
-        // Push to every outbound link (we as central writing to peer's CHAR_WRITE).
-        for (link in outboundLinks.values) {
+        val snapshot: List<OutboundLink> = synchronized(outboundLock) { outboundLinks.values.toList() }
+        for (link in snapshot) {
+            val chunkSize = chunkPayloadFor(link.mtu)
+            val chunks = Fragmentation.split(frame, chunkSize, msgId)
             for (chunk in chunks) link.enqueueWrite(chunk)
         }
+    }
+
+    private fun chunkPayloadFor(mtu: Int): Int {
+        // ATT overhead: 3 bytes for opcode + handle. Frame header: 6 bytes.
+        // Be conservative: subtract a couple extra bytes, clamp to safe range.
+        val raw = mtu - 3 - Fragmentation.HEADER_BYTES - 2
+        return raw.coerceIn(BleConstants.MIN_CHUNK_PAYLOAD, BleConstants.LARGE_CHUNK_PAYLOAD)
     }
 
     // ------------- GATT server (peripheral side) -------------
@@ -167,12 +200,15 @@ class BleTransport(private val context: Context) {
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-            when (newState) {
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    subscribers.remove(device.address)
-                    reassemblersServerSide.remove(device.address)
-                }
+            if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                subscribers.remove(device.address)
+                serverSideMtu.remove(device.address)
+                reassemblersServerSide.remove(device.address)
             }
+        }
+
+        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+            serverSideMtu[device.address] = mtu
         }
 
         override fun onCharacteristicWriteRequest(
@@ -255,7 +291,13 @@ class BleTransport(private val context: Context) {
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device ?: return
-            if (outboundLinks.containsKey(device.address)) return
+            val addr = device.address
+            synchronized(outboundLock) {
+                if (outboundLinks.containsKey(addr)) return
+            }
+            // Respect backoff window.
+            val bo = backoff[addr]
+            if (bo != null && System.currentTimeMillis() < bo.nextAttemptAtMs) return
             connectOutbound(device)
         }
         override fun onScanFailed(errorCode: Int) {
@@ -287,12 +329,33 @@ class BleTransport(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun connectOutbound(device: BluetoothDevice) {
-        val link = OutboundLink(context, device,
-            onIncoming = { frame -> scope.launch { _incoming.emit(frame) } },
-            onClosed = { addr -> outboundLinks.remove(addr) }
-        )
-        outboundLinks[device.address] = link
-        link.connect()
+        synchronized(outboundLock) {
+            // LRU-evict oldest link if we hit the cap.
+            while (outboundLinks.size >= BleConstants.MAX_OUTBOUND_LINKS) {
+                val oldest = outboundLinks.entries.iterator().next()
+                oldest.value.close()
+                outboundLinks.remove(oldest.key)
+            }
+            val link = OutboundLink(
+                context = context,
+                device = device,
+                onIncoming = { frame -> scope.launch { _incoming.emit(frame) } },
+                onClosed = { addr, success ->
+                    synchronized(outboundLock) { outboundLinks.remove(addr) }
+                    if (success) backoff.remove(addr) else recordFailure(addr)
+                },
+            )
+            outboundLinks[device.address] = link
+            link.connect()
+        }
+    }
+
+    private fun recordFailure(addr: String) {
+        val now = System.currentTimeMillis()
+        val prev = backoff[addr]
+        val attempt = (prev?.attempt ?: 0) + 1
+        val delayMs = min(BleConstants.BACKOFF_MAX_MS, BleConstants.BACKOFF_BASE_MS shl (attempt - 1).coerceAtMost(6))
+        backoff[addr] = BackoffState(attempt, now + delayMs)
     }
 
     private fun hasPermissions(): Boolean {
@@ -313,25 +376,30 @@ class BleTransport(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private inline fun <T> requirePerms(block: () -> T): T = block()
+
+    private data class BackoffState(val attempt: Int, val nextAttemptAtMs: Long)
 }
 
 /**
- * Outbound (we are central) link to a single peripheral. Writes outbound
- * frames to peer's CHAR_WRITE_UUID, subscribes to its CHAR_NOTIFY_UUID
- * for incoming frames, runs them through a Reassembler.
+ * Outbound link. Tracks negotiated MTU; queues writes and retries failed
+ * ones a bounded number of times before dropping.
  */
-private class OutboundLink(
+internal class OutboundLink(
     private val context: Context,
     private val device: BluetoothDevice,
     private val onIncoming: (ByteArray) -> Unit,
-    private val onClosed: (String) -> Unit,
+    private val onClosed: (String, Boolean) -> Unit,
 ) {
     private val tag = "OutboundLink(${device.address})"
     private var gatt: BluetoothGatt? = null
     private var writeChar: BluetoothGattCharacteristic? = null
     private val reassembler = Reassembler()
-    private val writeQueue = ArrayDeque<ByteArray>()
+    private val writeQueue = ArrayDeque<PendingWrite>()
     private var writing = false
+    @Volatile var mtu: Int = BleConstants.DEFAULT_MTU
+        private set
+    @Volatile private var ready = false
+    @Volatile private var everConnected = false
 
     @SuppressLint("MissingPermission")
     fun connect() {
@@ -339,6 +407,7 @@ private class OutboundLink(
             override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                 when (newState) {
                     BluetoothProfile.STATE_CONNECTED -> {
+                        everConnected = true
                         runCatching { g.requestMtu(517) }
                         runCatching { g.discoverServices() }
                     }
@@ -347,7 +416,7 @@ private class OutboundLink(
             }
 
             override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
-                Log.i(tag, "mtu = $mtu")
+                if (status == BluetoothGatt.GATT_SUCCESS) this@OutboundLink.mtu = mtu
             }
 
             override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
@@ -364,6 +433,7 @@ private class OutboundLink(
                         runCatching { g.writeDescriptor(cccd) }
                     }
                 }
+                ready = true
                 pumpQueue()
             }
 
@@ -381,37 +451,62 @@ private class OutboundLink(
                 characteristic: BluetoothGattCharacteristic,
                 status: Int
             ) {
-                writing = false
+                synchronized(writeQueue) {
+                    writing = false
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        // Retry the front item up to MAX_WRITE_ATTEMPTS times.
+                        val front = writeQueue.firstOrNull()
+                        if (front != null) {
+                            front.attempts += 1
+                            if (front.attempts >= BleConstants.MAX_WRITE_ATTEMPTS) writeQueue.removeFirst()
+                        }
+                    } else {
+                        writeQueue.removeFirstOrNull()
+                    }
+                }
                 pumpQueue()
             }
         })
     }
 
     fun enqueueWrite(chunk: ByteArray) {
-        synchronized(writeQueue) { writeQueue.addLast(chunk) }
+        synchronized(writeQueue) {
+            // Cap queue depth so a stuck link doesn't OOM us.
+            while (writeQueue.size >= BleConstants.MAX_WRITE_QUEUE) writeQueue.removeFirst()
+            writeQueue.addLast(PendingWrite(chunk))
+        }
         pumpQueue()
     }
 
     @SuppressLint("MissingPermission")
     private fun pumpQueue() {
+        if (!ready) return
         val ch = writeChar ?: return
         val g = gatt ?: return
         synchronized(writeQueue) {
             if (writing) return
-            val next = writeQueue.removeFirstOrNull() ?: return
+            val next = writeQueue.firstOrNull() ?: return
             writing = true
             ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            ch.value = next
+            ch.value = next.bytes
             val ok = runCatching { g.writeCharacteristic(ch) }.getOrDefault(false) == true
-            if (!ok) writing = false
+            if (!ok) {
+                writing = false
+                next.attempts += 1
+                if (next.attempts >= BleConstants.MAX_WRITE_ATTEMPTS) writeQueue.removeFirst()
+            }
         }
     }
 
     @SuppressLint("MissingPermission")
     fun close() {
+        if (gatt == null) return
         runCatching { gatt?.disconnect() }
         runCatching { gatt?.close() }
         gatt = null
-        onClosed(device.address)
+        ready = false
+        onClosed(device.address, everConnected)
     }
 }
+
+internal class PendingWrite(val bytes: ByteArray, var attempts: Int = 0)
