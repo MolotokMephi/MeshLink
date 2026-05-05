@@ -1,6 +1,10 @@
 package team.hex.meshlink.transport
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +49,8 @@ class LanTransport(private val context: Context) : Transport {
 
     private var socket: MulticastSocket? = null
     private var wifiLock: WifiManager.MulticastLock? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     private val reassemblers = ConcurrentHashMap<String, team.hex.meshlink.ble.Reassembler>()
 
@@ -79,11 +85,44 @@ class LanTransport(private val context: Context) : Transport {
             }
             socket = sock
             rxJob = scope.launch { rxLoop(sock, group) }
+            registerNetworkCallback()
             _state.value = TransportState.Running
         } catch (t: Throwable) {
             Log.w(tag, "start failed: $t")
             _state.value = TransportState.Failed
             stop()
+        }
+    }
+
+    /**
+     * Re-join the multicast group on every Wi-Fi-capable interface whenever
+     * connectivity changes — Android can switch between Wi-Fi/hotspot/Wi-Fi
+     * Direct and silently lose the multicast subscription.
+     */
+    private fun registerNetworkCallback() {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return
+        connectivityManager = cm
+        val req = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) { rejoinAllInterfaces() }
+            override fun onLost(network: Network) { rejoinAllInterfaces() }
+            override fun onLinkPropertiesChanged(
+                network: Network, lp: android.net.LinkProperties,
+            ) { rejoinAllInterfaces() }
+        }
+        runCatching { cm.registerNetworkCallback(req, cb) }
+        networkCallback = cb
+    }
+
+    private fun rejoinAllInterfaces() {
+        val sock = socket ?: return
+        val group = runCatching { InetAddress.getByName(GROUP) }.getOrNull() ?: return
+        for (iface in usableInterfaces()) {
+            runCatching { sock.leaveGroup(java.net.InetSocketAddress(group, PORT), iface) }
+            runCatching { sock.joinGroup(java.net.InetSocketAddress(group, PORT), iface) }
         }
     }
 
@@ -93,13 +132,19 @@ class LanTransport(private val context: Context) : Transport {
         socket = null
         runCatching { wifiLock?.release() }
         wifiLock = null
+        runCatching {
+            val cb = networkCallback
+            if (cb != null) connectivityManager?.unregisterNetworkCallback(cb)
+        }
+        networkCallback = null
+        connectivityManager = null
         reassemblers.clear()
         seenSenders = 0
         scope.cancel()
         _state.value = TransportState.Stopped
     }
 
-    override fun broadcast(frame: ByteArray) {
+    override fun broadcast(frame: ByteArray, hint: SendHint) {
         val sock = socket ?: return
         val group = runCatching { InetAddress.getByName(GROUP) }.getOrNull() ?: return
         val msgId = (System.nanoTime() and 0xFFFF).toInt()
@@ -107,6 +152,12 @@ class LanTransport(private val context: Context) : Transport {
         for (chunk in chunks) {
             val packet = DatagramPacket(chunk, chunk.size, group, PORT)
             runCatching { sock.send(packet) }
+        }
+        // Also broadcast on 255.255.255.255 (limited broadcast) for hotspots
+        // that filter multicast traffic between AP clients but pass broadcast.
+        runCatching {
+            val bcast = InetAddress.getByName("255.255.255.255")
+            for (chunk in chunks) sock.send(DatagramPacket(chunk, chunk.size, bcast, PORT))
         }
     }
 

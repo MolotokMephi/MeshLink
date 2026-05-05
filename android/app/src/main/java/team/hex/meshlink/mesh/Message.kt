@@ -33,11 +33,12 @@ data class MeshMessage(
     val signature: String = ""
 ) {
     fun canonicalBytes(): ByteArray {
-        // Sign over everything except `signature` and `relayPath` (which mutates as
-        // the message hops through the mesh).
+        // Sign over everything except the fields that mutate per relay hop:
+        // `signature` (filled in after hashing), `relayPath` (each node
+        // appends its id), and `ttl` (each node decrements it).
         val canon = json.encodeToString(
             serializer(),
-            copy(signature = "", relayPath = emptyList())
+            copy(signature = "", relayPath = emptyList(), ttl = 0)
         )
         return canon.toByteArray(Charsets.UTF_8)
     }

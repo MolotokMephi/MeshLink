@@ -58,6 +58,12 @@ class MeshRouter(
     // Known peer identities, indexed by nodeId.
     private val peers = ConcurrentHashMap<String, PeerIdentity>()
 
+    /** Adjacency graph used for shortest-path next-hop hints. */
+    val graph = MeshGraph(nodeId)
+
+    /** Per-sender temporary ban (set when a sender persistently exceeds rate). */
+    private val banUntil = ConcurrentHashMap<String, Long>()
+
     private val _outgoing = MutableSharedFlow<MeshMessage>(extraBufferCapacity = 64)
     val outgoing: SharedFlow<MeshMessage> = _outgoing.asSharedFlow()
 
@@ -69,6 +75,15 @@ class MeshRouter(
 
     private val _drops = MutableSharedFlow<DropReason>(extraBufferCapacity = 32)
     val drops: SharedFlow<DropReason> = _drops.asSharedFlow()
+
+    /**
+     * Emitted when a previously-seen [PeerIdentity] presents a different
+     * Ed25519 public key under the same node id (i.e. the device was
+     * factory-reset, or someone is impersonating). UI surfaces this as a
+     * trust-on-first-use mismatch.
+     */
+    private val _identityConflicts = MutableSharedFlow<IdentityConflict>(extraBufferCapacity = 8)
+    val identityConflicts: SharedFlow<IdentityConflict> = _identityConflicts.asSharedFlow()
 
     /** Hydrate dedup state from persistent storage. Call once at startup. */
     suspend fun hydrate() {
@@ -93,6 +108,13 @@ class MeshRouter(
     ): MeshMessage {
         val msgId = "$nodeId-${UUID.randomUUID()}"
         val nonce = ByteArray(8).also(rng::nextBytes).let(Crypto::b64)
+        // If we know a shortest path to the recipient, trim TTL so we don't
+        // flood the entire mesh for a message we know how to deliver in 3
+        // hops. Add slack so a single flapping link doesn't drop the message.
+        val effectiveTtl = if (recipientId != null) {
+            val dist = graph.distanceTo(recipientId)
+            if (dist != null && dist > 0) (dist + 2).coerceIn(2, ttl) else ttl
+        } else ttl
         return MeshMessage(
             type = type,
             senderId = nodeId,
@@ -100,7 +122,7 @@ class MeshRouter(
             payloadB64 = Crypto.b64(payload),
             timestamp = System.currentTimeMillis(),
             msgId = msgId,
-            ttl = ttl,
+            ttl = effectiveTtl,
             relayPath = listOf(nodeId),
             recipientId = recipientId,
             groupId = groupId,
@@ -189,8 +211,18 @@ class MeshRouter(
             drop(DropReason.LoopDetected, msg.senderId, null)
             return
         }
-        // Rate limit per sender (token bucket).
+        // Rate limit per sender (token bucket); persistent abusers get banned.
+        val banUnt = banUntil[msg.senderId]
+        if (banUnt != null && System.currentTimeMillis() < banUnt) {
+            drop(DropReason.RateLimited, msg.senderId, "banned")
+            return
+        }
         if (!allowRate(msg.senderId)) {
+            // Sustained abuse → temporary ban (escalating).
+            val bucket = rateBuckets[msg.senderId]
+            if (bucket != null && bucket.consecutiveDenies > 32) {
+                banUntil[msg.senderId] = System.currentTimeMillis() + RATE_BAN_MS
+            }
             drop(DropReason.RateLimited, msg.senderId, null)
             return
         }
@@ -204,6 +236,15 @@ class MeshRouter(
             drop(DropReason.BadSignature, msg.senderId, msg.msgId)
             return
         }
+
+        // Topology: an empty incoming relay path means the sender wrote
+        // straight to us; observe a direct edge. Always feed the path
+        // itself so we learn distant edges as well.
+        val now = System.currentTimeMillis()
+        if (msg.relayPath.isEmpty() || (msg.relayPath.size == 1 && msg.relayPath[0] == msg.senderId)) {
+            graph.observeDirect(msg.senderId, now)
+        }
+        graph.observeRelayPath(msg.relayPath + listOf(nodeId), now)
 
         // Deliver locally if this concerns us.
         val forUs =
@@ -241,6 +282,11 @@ class MeshRouter(
             lastSeenMs = System.currentTimeMillis(),
         )
         val prev = peers.put(pid.nodeId, pid)
+        if (prev != null && !prev.edPub.contentEquals(pid.edPub)) {
+            scope.launch {
+                _identityConflicts.emit(IdentityConflict(prev, pid))
+            }
+        }
         if (prev == null || !prev.edPub.contentEquals(pid.edPub)) {
             scope.launch { _peerEvents.emit(pid) }
         }
@@ -289,6 +335,9 @@ class MeshRouter(
 
         /** ±5 minutes is generous; tighten if device clocks are reliable. */
         const val MAX_CLOCK_SKEW_MS = 5 * 60 * 1000L
+
+        /** Sustained-abuse ban duration (mirrors core/security in Python). */
+        const val RATE_BAN_MS: Long = 30 * 1000L
     }
 
     private class RateBucket(
@@ -297,6 +346,8 @@ class MeshRouter(
     ) {
         private var tokens: Double = capacity.toDouble()
         private var lastRefillMs: Long = System.currentTimeMillis()
+        @Volatile var consecutiveDenies: Int = 0
+            private set
 
         @Synchronized
         fun allow(now: Long): Boolean {
@@ -305,8 +356,10 @@ class MeshRouter(
             lastRefillMs = now
             if (tokens >= 1.0) {
                 tokens -= 1.0
+                consecutiveDenies = 0
                 return true
             }
+            consecutiveDenies++
             return false
         }
     }
@@ -338,6 +391,13 @@ data class AnnouncePayload(
         } catch (_: Throwable) { null }
     }
 }
+
+/**
+ * Trust-on-first-use mismatch: same node id, different Ed25519 public key.
+ * Either the peer reset their identity (legitimate but lossy) or someone
+ * is spoofing — UI should warn loudly before letting messages through.
+ */
+data class IdentityConflict(val previous: PeerIdentity, val current: PeerIdentity)
 
 enum class DropReason {
     Unparseable,

@@ -39,6 +39,7 @@ import team.hex.meshlink.storage.MeshDb
 import team.hex.meshlink.storage.PeerRow
 import team.hex.meshlink.storage.RoomSeenStore
 import team.hex.meshlink.transport.LanTransport
+import team.hex.meshlink.transport.SendHint
 import team.hex.meshlink.transport.Transport
 import team.hex.meshlink.transport.WifiDirectTransport
 
@@ -73,6 +74,7 @@ class MeshService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Notifications.ensureChannels(this)
         startForegroundCompat()
 
         val app = applicationContext as MeshLinkApp
@@ -99,11 +101,19 @@ class MeshService : Service() {
         )
 
         pumpJob = scope.launch {
-            launch { router.hydrate() }
+            // Block transport ingestion until the persistent seen-cache is in
+            // place, so we don't double-process messages that already finished
+            // a previous boot cycle.
+            router.hydrate()
             for (t in transports) launch { t.incoming.collect { router.onIncoming(it) } }
-            launch { router.outgoing.collect { msg -> for (t in transports) t.broadcast(msg.toBytes()) } }
+            launch { router.outgoing.collect { msg ->
+                val hint = if (msg.type in LOW_LATENCY_TYPES) SendHint.LOW_LATENCY else SendHint.RELIABLE
+                val bytes = msg.toBytes()
+                for (t in transports) t.broadcast(bytes, hint)
+            } }
             launch { collectAppInbox() }
             launch { collectPeers() }
+            launch { collectIdentityConflicts() }
             launch { announceLoop() }
         }
 
@@ -248,6 +258,13 @@ class MeshService : Service() {
             ts = msg.timestamp,
             delivery = "delivered",
         ))
+        Notifications.postMessage(
+            this,
+            scopeId = msg.senderId,
+            scopeKind = SCOPE_PEER,
+            title = router.peerById(msg.senderId)?.displayName ?: msg.senderName,
+            text = text,
+        )
         // Send DELIVERY_ACK back to sender (encrypted).
         val xPub = router.peerById(msg.senderId)?.xPub ?: return
         val sessionKey = Crypto.deriveSessionKey(identity.xPriv, xPub)
@@ -269,6 +286,15 @@ class MeshService : Service() {
             ts = msg.timestamp,
             delivery = "delivered",
         ))
+        val groupName = db.groupDao().byId(groupId)?.name ?: "Group"
+        val senderName = router.peerById(msg.senderId)?.displayName ?: msg.senderName
+        Notifications.postMessage(
+            this,
+            scopeId = groupId,
+            scopeKind = SCOPE_GROUP,
+            title = groupName,
+            text = "$senderName: $text",
+        )
     }
 
     private suspend fun handleIncomingGroupInvite(msg: MeshMessage) {
@@ -302,9 +328,24 @@ class MeshService : Service() {
         }
     }
 
+    private suspend fun collectIdentityConflicts() {
+        router.identityConflicts.collect { conflict ->
+            // Down-grade trust on the existing peer record so UI surfaces it.
+            db.peerDao().setTrusted(conflict.current.nodeId, false)
+            Notifications.postTrustWarning(
+                ctx = this,
+                scopeId = conflict.current.nodeId,
+                title = "Identity changed for ${conflict.current.displayName}",
+                text = "This peer's signing key changed. They may have reset their device — " +
+                    "or someone is impersonating them. Re-pair to restore trust.",
+            )
+        }
+    }
+
     private suspend fun announceLoop() {
         while (true) {
             router.broadcastAnnounce()
+            router.graph.gc()
             delay(15_000)
         }
     }
@@ -345,6 +386,19 @@ class MeshService : Service() {
         private const val FOREGROUND_ID = 0xBEEF
         const val SCOPE_PEER = "peer"
         const val SCOPE_GROUP = "group"
+
+        /**
+         * Message types where dropping a single in-flight chunk costs less
+         * than blocking the link with retries — chat texts, typing pings,
+         * announces, read receipts. Files and acks stay reliable.
+         */
+        private val LOW_LATENCY_TYPES = setOf(
+            MsgType.TYPING,
+            MsgType.PING,
+            MsgType.PONG,
+            MsgType.ANNOUNCE,
+            MsgType.READ_RECEIPT,
+        )
 
         fun start(ctx: Context) {
             val intent = Intent(ctx, MeshService::class.java)

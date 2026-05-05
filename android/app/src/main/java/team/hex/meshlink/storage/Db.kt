@@ -159,6 +159,9 @@ interface OutboxDao {
     @Query("DELETE FROM outbox WHERE acked = 1 AND created_at < :before")
     suspend fun trimAcked(before: Long)
 
+    @Query("SELECT msgId FROM outbox WHERE acked = 0 AND attempts >= :maxAttempts")
+    suspend fun exhaustedIds(maxAttempts: Int): List<String>
+
     @Query("DELETE FROM outbox WHERE attempts >= :maxAttempts")
     suspend fun dropExhausted(maxAttempts: Int)
 }

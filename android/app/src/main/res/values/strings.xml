@@ -1,8 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MeshLink</string>
+
+    <!-- Foreground service notification -->
     <string name="notif_channel_id">meshlink_service</string>
     <string name="notif_channel_name">Mesh service</string>
     <string name="notif_title">MeshLink mesh active</string>
     <string name="notif_text">Discovering peers and relaying messages over Bluetooth LE</string>
+
+    <!-- Push notifications for chat messages -->
+    <string name="notif_messages_channel">Messages</string>
+    <string name="notif_messages_desc">New messages from peers and groups</string>
+    <string name="notif_pairing_channel">Pairing</string>
+
+    <!-- UI strings -->
+    <string name="tab_peers">Peers</string>
+    <string name="tab_groups">Groups</string>
+    <string name="tab_settings">Settings</string>
+    <string name="action_pair">Pair</string>
+    <string name="action_search">Search</string>
+    <string name="action_new_group">New group</string>
+    <string name="action_export_identity">Export identity</string>
+    <string name="action_clear_history">Clear chat history</string>
+    <string name="action_battery_whitelist">Disable battery optimization</string>
+
+    <string name="placeholder_message">message…</string>
+    <string name="placeholder_search_messages">Search messages…</string>
+    <string name="placeholder_pairing">meshlink:1:…</string>
+
+    <string name="empty_peers">Looking for nearby MeshLink nodes…</string>
+    <string name="empty_groups">No groups yet</string>
+    <string name="empty_messages">No messages yet — say hi.</string>
+
+    <string name="onboarding_title">Welcome to MeshLink</string>
+    <string name="onboarding_body">A fully offline messenger that routes through every Bluetooth LE, Wi-Fi LAN and Wi-Fi Direct radio nearby. We need a few permissions and battery whitelisting so the mesh keeps working when your screen is locked.</string>
+    <string name="onboarding_grant">Grant permissions</string>
+    <string name="onboarding_continue">Continue</string>
+
+    <string name="settings_display_name">Display name</string>
+    <string name="settings_node_id">Your node id</string>
+    <string name="settings_topology">Mesh topology</string>
+    <string name="settings_save">Save</string>
+
+    <string name="link_direct">direct</string>
+    <string name="link_relay">via relay</string>
+    <string name="link_unknown">no route</string>
 </resources>

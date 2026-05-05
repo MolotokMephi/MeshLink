@@ -1,3 +1,5 @@
+@file:SuppressLint("MissingPermission")
+
 package team.hex.meshlink.ble
 
 import android.Manifest
@@ -28,6 +30,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -38,6 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import team.hex.meshlink.transport.SendHint
 import team.hex.meshlink.transport.Transport
 import team.hex.meshlink.transport.TransportState
 import java.util.concurrent.ConcurrentHashMap
@@ -96,6 +100,14 @@ class BleTransport(private val context: Context) : Transport {
 
     @Volatile private var advertising = false
     @Volatile private var scanning = false
+    private var keepaliveJob: Job? = null
+
+    /**
+     * Serialize notify-characteristic broadcasts: BluetoothGattCharacteristic
+     * is mutable shared state, so two concurrent `broadcast()` calls would
+     * stomp on each other's `value` field and corrupt subscriber payloads.
+     */
+    private val notifyLock = Any()
 
     fun isReady(): Boolean = adapter != null && adapter.isEnabled && hasPermissions()
 
@@ -110,11 +122,39 @@ class BleTransport(private val context: Context) : Transport {
         startGattServer()
         startAdvertising()
         startScanning()
+        startKeepalive()
         _state.value = TransportState.Running
+    }
+
+    private fun startKeepalive() {
+        keepaliveJob?.cancel()
+        keepaliveJob = scope.launch {
+            while (true) {
+                delay(BleConstants.KEEPALIVE_INTERVAL_MS)
+                pruneStaleLinks()
+            }
+        }
+    }
+
+    private fun pruneStaleLinks() {
+        val now = System.currentTimeMillis()
+        val toClose = mutableListOf<OutboundLink>()
+        synchronized(outboundLock) {
+            val it = outboundLinks.entries.iterator()
+            while (it.hasNext()) {
+                val link = it.next().value
+                if (now - link.lastActivityMs > BleConstants.LINK_IDLE_TIMEOUT_MS) {
+                    toClose += link
+                    it.remove()
+                }
+            }
+        }
+        toClose.forEach { it.close() }
     }
 
     override fun stop() {
         if (_state.value == TransportState.Stopped) return
+        keepaliveJob?.cancel(); keepaliveJob = null
         stopAdvertising()
         stopScanning()
         synchronized(outboundLock) {
@@ -130,7 +170,7 @@ class BleTransport(private val context: Context) : Transport {
         _state.value = TransportState.Stopped
     }
 
-    override fun broadcast(frame: ByteArray) {
+    override fun broadcast(frame: ByteArray, hint: SendHint) {
         val msgId = (System.nanoTime() and 0xFFFF).toInt()
         val notifyCh = notifyChar
         val server = gattServer
@@ -140,11 +180,14 @@ class BleTransport(private val context: Context) : Transport {
                 val chunkSize = chunkPayloadFor(mtu)
                 val chunks = Fragmentation.split(frame, chunkSize, msgId)
                 for (chunk in chunks) {
-                    runCatching {
-                        requirePerms {
-                            notifyCh.value = chunk
-                            @Suppress("DEPRECATION")
-                            server.notifyCharacteristicChanged(device, notifyCh, false)
+                    // notifyChar.value is mutable shared state — serialize.
+                    synchronized(notifyLock) {
+                        runCatching {
+                            requirePerms {
+                                notifyCh.value = chunk
+                                @Suppress("DEPRECATION")
+                                server.notifyCharacteristicChanged(device, notifyCh, false)
+                            }
                         }
                     }
                 }
@@ -154,7 +197,7 @@ class BleTransport(private val context: Context) : Transport {
         for (link in snapshot) {
             val chunkSize = chunkPayloadFor(link.mtu)
             val chunks = Fragmentation.split(frame, chunkSize, msgId)
-            for (chunk in chunks) link.enqueueWrite(chunk)
+            for (chunk in chunks) link.enqueueWrite(chunk, hint)
         }
     }
 
@@ -400,6 +443,8 @@ internal class OutboundLink(
         private set
     @Volatile private var ready = false
     @Volatile private var everConnected = false
+    @Volatile var lastActivityMs: Long = System.currentTimeMillis()
+        private set
 
     @SuppressLint("MissingPermission")
     fun connect() {
@@ -442,6 +487,7 @@ internal class OutboundLink(
                 characteristic: BluetoothGattCharacteristic
             ) {
                 val data = characteristic.value ?: return
+                lastActivityMs = System.currentTimeMillis()
                 val full = reassembler.feed(data)
                 if (full != null) onIncoming(full)
             }
@@ -457,23 +503,26 @@ internal class OutboundLink(
                         // Retry the front item up to MAX_WRITE_ATTEMPTS times.
                         val front = writeQueue.firstOrNull()
                         if (front != null) {
-                            front.attempts += 1
-                            if (front.attempts >= BleConstants.MAX_WRITE_ATTEMPTS) writeQueue.removeFirst()
+                            front.attempts = front.attempts + 1
+                            if (front.attempts >= BleConstants.MAX_WRITE_ATTEMPTS) {
+                                writeQueue.removeFirst()
+                            }
                         }
                     } else {
                         writeQueue.removeFirstOrNull()
                     }
+                    Unit
                 }
                 pumpQueue()
             }
         })
     }
 
-    fun enqueueWrite(chunk: ByteArray) {
+    fun enqueueWrite(chunk: ByteArray, hint: SendHint = SendHint.RELIABLE) {
         synchronized(writeQueue) {
             // Cap queue depth so a stuck link doesn't OOM us.
             while (writeQueue.size >= BleConstants.MAX_WRITE_QUEUE) writeQueue.removeFirst()
-            writeQueue.addLast(PendingWrite(chunk))
+            writeQueue.addLast(PendingWrite(chunk, hint = hint))
         }
         pumpQueue()
     }
@@ -487,10 +536,19 @@ internal class OutboundLink(
             if (writing) return
             val next = writeQueue.firstOrNull() ?: return
             writing = true
-            ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            ch.writeType = if (next.hint == SendHint.LOW_LATENCY) {
+                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            } else {
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            }
             ch.value = next.bytes
             val ok = runCatching { g.writeCharacteristic(ch) }.getOrDefault(false) == true
-            if (!ok) {
+            if (next.hint == SendHint.LOW_LATENCY) {
+                // No callback for write-no-response; treat as instantly done.
+                writing = false
+                writeQueue.removeFirstOrNull()
+                lastActivityMs = System.currentTimeMillis()
+            } else if (!ok) {
                 writing = false
                 next.attempts += 1
                 if (next.attempts >= BleConstants.MAX_WRITE_ATTEMPTS) writeQueue.removeFirst()
@@ -509,4 +567,8 @@ internal class OutboundLink(
     }
 }
 
-internal class PendingWrite(val bytes: ByteArray, var attempts: Int = 0)
+internal class PendingWrite(
+    val bytes: ByteArray,
+    var attempts: Int = 0,
+    val hint: SendHint = SendHint.RELIABLE,
+)
