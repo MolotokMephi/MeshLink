@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MeshLink</string>
+    <string name="notif_channel_id">meshlink_service</string>
+    <string name="notif_channel_name">Mesh service</string>
+    <string name="notif_title">MeshLink mesh active</string>
+    <string name="notif_text">Discovering peers and relaying messages over Bluetooth LE</string>
+</resources>
