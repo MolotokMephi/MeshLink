@@ -53,8 +53,11 @@ class MainActivity : ComponentActivity() {
 
     private val permissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { granted ->
-        if (granted.values.all { it }) startServiceAndBind()
+    ) {
+        // Always proceed: optional perms (POST_NOTIFICATIONS, NEARBY_WIFI)
+        // shouldn't block the messenger, and refusing core BLE just leaves
+        // us with a degraded transport set we can still operate on.
+        startServiceAndBind()
     }
 
     private val openScopeId by lazy { mutableStateOf<String?>(null) }
