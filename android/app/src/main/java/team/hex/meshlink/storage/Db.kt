@@ -27,6 +27,22 @@ data class ChatMessageRow(
     @ColumnInfo(name = "ts") val ts: Long,
     /** "pending" | "sent" | "delivered" | "read" | "failed" — outgoing only. */
     @ColumnInfo(name = "delivery") val delivery: String = "delivered",
+    /** True for outgoing messages and for incoming ones whose chat has been opened. */
+    @ColumnInfo(name = "read") val read: Boolean = true,
+)
+
+/**
+ * Aggregate row used by the home "Chats" tab — one entry per conversation
+ * with the latest body preview, timestamp, and unread count.
+ */
+data class ConversationSummary(
+    @ColumnInfo(name = "scope_id") val scopeId: String,
+    @ColumnInfo(name = "scope_kind") val scopeKind: String,
+    @ColumnInfo(name = "title") val title: String,
+    @ColumnInfo(name = "last_body") val lastBody: String,
+    @ColumnInfo(name = "last_ts") val lastTs: Long,
+    @ColumnInfo(name = "last_outgoing") val lastOutgoing: Boolean,
+    @ColumnInfo(name = "unread") val unread: Int,
 )
 
 @Entity(tableName = "peers")
@@ -110,6 +126,43 @@ interface ChatDao {
 
     @Query("DELETE FROM chat_messages WHERE ts < :before")
     suspend fun deleteOlderThan(before: Long)
+
+    @Query("UPDATE chat_messages SET read = 1 WHERE scope_id = :scopeId AND scope_kind = :kind AND read = 0")
+    suspend fun markScopeRead(scopeId: String, kind: String)
+
+    @Query("SELECT COUNT(*) FROM chat_messages WHERE read = 0")
+    fun streamUnreadTotal(): Flow<Int>
+
+    /**
+     * One row per conversation with the latest message preview. Joins
+     * peers/groups for a friendly title, falls back to scope id.
+     */
+    @Query("""
+        SELECT
+            m.scope_id     AS scope_id,
+            m.scope_kind   AS scope_kind,
+            COALESCE(p.name, g.name, m.scope_id) AS title,
+            m.body         AS last_body,
+            m.ts           AS last_ts,
+            m.outgoing     AS last_outgoing,
+            (SELECT COUNT(*) FROM chat_messages u
+              WHERE u.scope_id = m.scope_id
+                AND u.scope_kind = m.scope_kind
+                AND u.read = 0) AS unread
+        FROM chat_messages m
+        INNER JOIN (
+            SELECT scope_id, scope_kind, MAX(ts) AS max_ts
+            FROM chat_messages
+            GROUP BY scope_id, scope_kind
+        ) latest
+            ON latest.scope_id = m.scope_id
+           AND latest.scope_kind = m.scope_kind
+           AND latest.max_ts = m.ts
+        LEFT JOIN peers  p ON m.scope_kind = 'peer'  AND p.nodeId  = m.scope_id
+        LEFT JOIN `groups` g ON m.scope_kind = 'group' AND g.groupId = m.scope_id
+        ORDER BY m.ts DESC
+    """)
+    fun streamConversations(): Flow<List<ConversationSummary>>
 }
 
 @Dao
@@ -202,7 +255,7 @@ interface FileDao {
         GroupRow::class,
         FileRow::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class MeshDb : RoomDatabase() {
@@ -224,9 +277,21 @@ abstract class MeshDb : RoomDatabase() {
                 MeshDb::class.java,
                 "meshlink.db"
             )
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
                 .also { instance = it }
+        }
+
+        /**
+         * v3 adds a `read` flag on chat_messages so the home screen can
+         * surface unread badges per conversation. All existing rows are
+         * marked as read so the user doesn't get a flood of notifications
+         * on first launch.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN read INTEGER NOT NULL DEFAULT 1")
+            }
         }
 
         /**

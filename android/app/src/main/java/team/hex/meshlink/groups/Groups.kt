@@ -77,6 +77,52 @@ class Groups(
             Crypto.aesGcmDecrypt(row.sharedKey, ciphertext).toString(Charsets.UTF_8)
         }.getOrNull()
     }
+
+    /**
+     * Add new members to an existing group. We rotate the shared key so
+     * past ciphertext stays unreadable to the new joiners (post-compromise
+     * security on add) and re-issue [GroupInvitePayload]s carrying the
+     * fresh key. Existing members are also re-keyed via a 1:1 invite.
+     */
+    suspend fun addMembers(groupId: String, newMembers: List<String>): Boolean {
+        val row = db.groupDao().byId(groupId) ?: return false
+        val current = row.membersCsv.split(",").filter { it.isNotEmpty() }.toSet()
+        val merged = (current + newMembers).toList()
+        val freshKey = ByteArray(32).also(rng::nextBytes)
+        db.groupDao().upsert(row.copy(sharedKey = freshKey, membersCsv = merged.joinToString(",")))
+        val invite = GroupInvitePayload(
+            groupId = groupId,
+            name = row.name,
+            sharedKeyB64 = Crypto.b64(freshKey),
+            members = merged,
+        )
+        // Send the new shared key to *all* members, not just the new ones,
+        // otherwise the existing members can't decrypt new messages.
+        for (m in merged) sendEncrypted(m, MsgType.GROUP_INVITE, invite.toBytes())
+        return true
+    }
+
+    /**
+     * Remove [removed] members from the group. Forward secrecy is the
+     * goal: rotate the shared key so the removed members' future ciphertext
+     * (recovered from the air) is unreadable to them. We do not invite the
+     * removed members.
+     */
+    suspend fun removeMembers(groupId: String, removed: List<String>): Boolean {
+        val row = db.groupDao().byId(groupId) ?: return false
+        val current = row.membersCsv.split(",").filter { it.isNotEmpty() }.toSet()
+        val remaining = (current - removed.toSet()).toList()
+        val freshKey = ByteArray(32).also(rng::nextBytes)
+        db.groupDao().upsert(row.copy(sharedKey = freshKey, membersCsv = remaining.joinToString(",")))
+        val invite = GroupInvitePayload(
+            groupId = groupId,
+            name = row.name,
+            sharedKeyB64 = Crypto.b64(freshKey),
+            members = remaining,
+        )
+        for (m in remaining) sendEncrypted(m, MsgType.GROUP_INVITE, invite.toBytes())
+        return true
+    }
 }
 
 @Serializable

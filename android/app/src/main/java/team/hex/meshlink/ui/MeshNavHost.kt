@@ -15,10 +15,12 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,6 +62,7 @@ import team.hex.meshlink.pairing.PairingPayload
 import team.hex.meshlink.service.MeshService
 import team.hex.meshlink.service.Notifications
 import team.hex.meshlink.storage.ChatMessageRow
+import team.hex.meshlink.storage.ConversationSummary
 import team.hex.meshlink.storage.GroupRow
 import team.hex.meshlink.storage.MeshDb
 import team.hex.meshlink.storage.PeerRow
@@ -74,6 +77,7 @@ private sealed class Screen {
     object Settings : Screen()
     object NewGroup : Screen()
     data class Chat(val scopeId: String, val kind: String, val title: String) : Screen()
+    data class GroupInfo(val groupId: String) : Screen()
 }
 
 @Composable
@@ -127,6 +131,16 @@ fun MeshNavHost(
                     Notifications.cancelForScope(ctx, s.scopeId)
                     screen = Screen.Home
                 },
+                onOpenInfo = {
+                    if (s.kind == MeshService.SCOPE_GROUP) {
+                        screen = Screen.GroupInfo(s.scopeId)
+                    }
+                },
+            )
+            is Screen.GroupInfo -> GroupInfoScreen(
+                groupId = s.groupId,
+                db = db, getService = getService,
+                onBack = { screen = Screen.Home },
             )
         }
     }
@@ -164,16 +178,172 @@ private fun HomeScreen(
         Spacer(Modifier.height(8.dp))
         GlassPillTabs(
             selected = tab,
-            tabs = listOf("Peers", "Groups"),
+            tabs = listOf("Chats", "Peers", "Groups"),
             onSelect = { tab = it },
             modifier = Modifier.padding(horizontal = 16.dp),
         )
         Spacer(Modifier.height(12.dp))
         Box(Modifier.weight(1f)) {
             when (tab) {
-                0 -> PeerList(db = db, getService = getService, onClick = onPeer)
-                1 -> GroupList(db = db, onClick = onGroup, onNewGroup = onNewGroup)
+                0 -> ChatList(
+                    db = db,
+                    onPeer = onPeer,
+                    onGroup = onGroup,
+                    onNewGroup = onNewGroup,
+                    onPair = onPair,
+                )
+                1 -> PeerList(db = db, getService = getService, onClick = onPeer)
+                2 -> GroupList(db = db, onClick = onGroup, onNewGroup = onNewGroup)
             }
+        }
+    }
+}
+
+@Composable
+private fun ChatList(
+    db: MeshDb,
+    onPeer: (PeerRow) -> Unit,
+    onGroup: (GroupRow) -> Unit,
+    onNewGroup: () -> Unit,
+    onPair: () -> Unit,
+) {
+    val convs by db.chatDao().streamConversations().collectAsState(initial = emptyList())
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    Box(Modifier.fillMaxSize()) {
+        if (convs.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                GlassSurface(
+                    modifier = Modifier.padding(24.dp),
+                    shape = RoundedCornerShape(28.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("No chats yet", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Pair a peer or invite contacts into a group to start chatting offline.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = onPair) { Text("Pair a peer") }
+                            Button(onClick = onNewGroup) { Text("New group") }
+                        }
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(convs, key = { it.scopeId + it.scopeKind }) { conv ->
+                    ConversationCard(
+                        conv = conv,
+                        onClick = {
+                            scope.launch {
+                                if (conv.scopeKind == MeshService.SCOPE_PEER) {
+                                    val p = db.peerDao().byId(conv.scopeId)
+                                    if (p != null) onPeer(p)
+                                } else {
+                                    val g = db.groupDao().byId(conv.scopeId)
+                                    if (g != null) onGroup(g)
+                                }
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConversationCard(
+    conv: ConversationSummary,
+    onClick: () -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(20.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(seed = conv.title.ifEmpty { conv.scopeId })
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        conv.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        relativeTime(conv.lastTs),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                val preview = (if (conv.lastOutgoing) "You: " else "") + conv.lastBody
+                Text(
+                    preview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
+            if (conv.unread > 0) {
+                Spacer(Modifier.width(8.dp))
+                UnreadBadge(conv.unread)
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnreadBadge(count: Int) {
+    Box(
+        modifier = Modifier
+            .heightIn(min = 22.dp)
+            .widthIn(min = 22.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (count > 99) "99+" else count.toString(),
+            color = MaterialTheme.colorScheme.onPrimary,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+private fun relativeTime(ts: Long): String {
+    val now = System.currentTimeMillis()
+    val diff = now - ts
+    return when {
+        diff < 60_000L -> "now"
+        diff < 60 * 60_000L -> "${diff / 60_000L}m"
+        diff < 24 * 60 * 60_000L -> "${diff / (60 * 60_000L)}h"
+        diff < 7 * 24 * 60 * 60_000L -> "${diff / (24 * 60 * 60_000L)}d"
+        else -> {
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = ts }
+            "%02d.%02d".format(
+                cal.get(java.util.Calendar.DAY_OF_MONTH),
+                cal.get(java.util.Calendar.MONTH) + 1,
+            )
         }
     }
 }
@@ -453,7 +623,28 @@ private fun PairingScreen(
     val ourString = remember { ourPayload.encode() }
     var input by remember { mutableStateOf("") }
     var status by remember { mutableStateOf<String?>(null) }
+    var scanning by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    if (scanning) {
+        QrScannerScreen(
+            onBack = { scanning = false },
+            onScanned = { payload ->
+                val svc = getService()
+                if (svc != null) {
+                    scope.launch {
+                        svc.acceptPairing(payload)
+                        status = "Trusted ${payload.name} (${payload.nodeId})"
+                        scanning = false
+                    }
+                } else {
+                    status = "Service not bound yet — try again."
+                    scanning = false
+                }
+            },
+        )
+        return
+    }
 
     Column(
         modifier = Modifier
@@ -504,8 +695,19 @@ private fun PairingScreen(
                 shape = RoundedCornerShape(24.dp),
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Paste a peer's pairing code", style = MaterialTheme.typography.titleMedium)
+                    Text("Trust a peer", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { scanning = true },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Scan QR") }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text("or paste the code below",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+                    Spacer(Modifier.height(8.dp))
                     GlassTextField(
                         value = input,
                         onValueChange = { input = it },
@@ -808,12 +1010,19 @@ private fun ChatScreen(
     db: MeshDb,
     getService: () -> MeshService?,
     onBack: () -> Unit,
+    onOpenInfo: () -> Unit = {},
 ) {
     val all by db.chatDao().streamForScope(scopeId, kind).collectAsState(initial = emptyList())
     var draft by remember { mutableStateOf("") }
     var query by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
+
+    // Mark conversation read on first composition + whenever a fresh batch
+    // of incoming messages lands.
+    androidx.compose.runtime.LaunchedEffect(scopeId, kind, all.size) {
+        getService()?.markScopeRead(scopeId, kind)
+    }
 
     val pickFile = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -845,6 +1054,11 @@ private fun ChatScreen(
             actions = {
                 IconButton(onClick = { query = if (query == null) "" else null }) {
                     Icon(Icons.Filled.Search, contentDescription = "search")
+                }
+                if (kind == MeshService.SCOPE_GROUP) {
+                    IconButton(onClick = onOpenInfo) {
+                        Icon(Icons.Filled.GroupAdd, contentDescription = "group settings")
+                    }
                 }
             },
         )
@@ -1019,5 +1233,146 @@ private fun GlassTextField(
             trailingIcon = trailing,
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+// ------------------------------- Group info -------------------------------
+
+@Composable
+private fun GroupInfoScreen(
+    groupId: String,
+    db: MeshDb,
+    getService: () -> MeshService?,
+    onBack: () -> Unit,
+) {
+    val groups by db.groupDao().streamAll().collectAsState(initial = emptyList())
+    val peers by db.peerDao().streamAll().collectAsState(initial = emptyList())
+    val group = groups.firstOrNull { it.groupId == groupId }
+    val members = remember(group) {
+        group?.membersCsv?.split(",")?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+    }
+    val toAdd = remember { mutableStateOf(setOf<String>()) }
+    val toRemove = remember { mutableStateOf(setOf<String>()) }
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(WindowInsets.systemBars.asPaddingValues()),
+    ) {
+        GlassHeader(
+            title = group?.name ?: "Group",
+            leading = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "back")
+                }
+            },
+        )
+        if (group == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Group not found.")
+            }
+            return@Column
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Members (${members.size})",
+                        style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Removing a member rotates the group key so they can no " +
+                            "longer decrypt new messages.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                    )
+                }
+            }
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(peers, key = { it.nodeId }) { p ->
+                    val isMember = p.nodeId in members
+                    val markedAdd = p.nodeId in toAdd.value
+                    val markedRemove = p.nodeId in toRemove.value
+                    val onClick = {
+                        if (isMember) {
+                            toRemove.value = if (markedRemove) toRemove.value - p.nodeId
+                            else toRemove.value + p.nodeId
+                        } else {
+                            toAdd.value = if (markedAdd) toAdd.value - p.nodeId
+                            else toAdd.value + p.nodeId
+                        }
+                    }
+                    GlassSurface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onClick() },
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Avatar(seed = p.nodeId, sizeDp = 32)
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(p.name, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    when {
+                                        markedRemove -> "will be removed"
+                                        markedAdd -> "will be added"
+                                        isMember -> "member"
+                                        else -> p.nodeId
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                )
+                            }
+                            if (isMember && !markedRemove) {
+                                GlassChip(
+                                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f),
+                                ) {
+                                    Text(
+                                        "in",
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Button(
+                onClick = {
+                    val svc = getService() ?: return@Button
+                    scope.launch {
+                        if (toAdd.value.isNotEmpty()) {
+                            svc.groupsHelper().addMembers(groupId, toAdd.value.toList())
+                        }
+                        if (toRemove.value.isNotEmpty()) {
+                            svc.groupsHelper().removeMembers(groupId, toRemove.value.toList())
+                        }
+                        toAdd.value = emptySet()
+                        toRemove.value = emptySet()
+                        status = "Group key rotated"
+                    }
+                },
+                enabled = toAdd.value.isNotEmpty() || toRemove.value.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Apply changes (rekey)") }
+            status?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            }
+        }
     }
 }

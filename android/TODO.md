@@ -55,24 +55,47 @@
 - ✅ GitHub Actions CI: assembleDebug + lintDebug + testDebugUnitTest +
   upload APK + lint report.
 
+## Завершено в продолжении ветки
+
+- ✅ **Combined Chats tab** — главная вкладка теперь показывает все
+      переписки (1:1 и группы) с превью последнего сообщения, относительной
+      меткой времени (now/5m/2h/3d) и unread-бейджем; пустое состояние
+      ведёт к pairing/new-group flow.
+- ✅ **Unread tracking.** `chat_messages.read` (миграция v2→v3) +
+      агрегационный SQL `streamConversations()`. Чат помечается
+      прочитанным при входе через `LaunchedEffect`.
+- ✅ **NFC-pairing.** Manifest intent-filter на `NDEF_DISCOVERED`,
+      foreground dispatch в MainActivity, `NfcPairing` парсит URI/TEXT
+      записи и записывает теги; `meshlink:1:…` остаётся общим payload-ом.
+- ✅ **QR camera scanner.** CameraX preview + ZXing `MultiFormatReader`
+      в `QrScannerScreen`. Pairing screen теперь предлагает Scan QR как
+      первичный путь.
+- ✅ **Group add/remove member with rekey.** `Groups.addMembers/removeMembers`
+      ротируют shared key и шлют свежий `GROUP_INVITE` всем
+      оставшимся; `GroupInfoScreen` собирает переключения и применяет их
+      батчем.
+- ✅ **LAN TCP fallback.** Внутри `LanTransport` слушаем 43212/tcp и
+      открываем outbound линки через `connectTcp`; payload'ы > 1200 байт
+      дублируются в TCP, чтобы файлы и крупные envelope'ы не страдали
+      на хотспотах с фильтрацией мультикаста.
+- ✅ **Onboarding/theme polish.** `MeshLinkTheme` теперь оборачивает
+      контент в `Surface` с явным `contentColor = onBackground`, glass
+      cards оборачивают `LocalContentColor = onSurface`. Заголовок
+      онбординга больше не теряется на тёмном фоне; тинты aurora и
+      glass-карт стали ярче для читаемости в dynamic-color schemes.
+
 ## P1 — Что ещё стоит сделать
 
 ### Forward secrecy
-- [ ] **MLS / Signal Sender Keys для групп.** Сейчас `groups/Groups.kt` — один
-      статический AES-ключ на группу. При компрометации одного устройства
-      раскрываются все прошлые/будущие сообщения. Внедрить либо
-      Signal Sender Keys (per-sender ratchet) либо MLS (RFC 9420);
-      первый вариант проще, второй — стандартный.
-- [ ] **Add/remove member** с rekey: сейчас `members_csv` хранится, но
-      операций по добавлению/удалению с ротацией ключа нет.
+- [ ] **MLS / Signal Sender Keys для групп.** Текущий rekey-on-membership
+      даёт forward secrecy при добавлении/удалении, но не за пределами:
+      компрометация устройства всё ещё раскрывает все сообщения,
+      зашифрованные текущим shared key между двумя ротациями. Внедрить
+      либо Signal Sender Keys (per-sender ratchet) либо MLS (RFC 9420).
 - [ ] **Per-recipient session ratchet (Double Ratchet)** вместо чистого
       ECDH — даст forward secrecy для 1:1 чатов.
 
 ### Discovery / pairing UX
-- [ ] **Сканер QR.** Сейчас вход — только paste. Добавить
-      CameraX + ML Kit Barcode Scanning (или ZXing Core) и интент.
-- [ ] **NFC-pairing** через `Ndef` для устройств с NFC: запись
-      `meshlink:1:…` строки в payload, чтение через `NDEF_DISCOVERED`.
 - [ ] **Sound-pairing** (gg-wave / chirp.io) как fallback там, где нет
       ни камеры, ни NFC, ни общей сети.
 
@@ -80,9 +103,6 @@
 - [ ] **Auto-upgrade с BLE на Wi-Fi Direct** для больших передач: при
       получении FILE_OFFER предложить upgrade-канал, согласовать роли
       group-owner/client, передать чанки через TCP.
-- [ ] **LAN: TCP fallback внутри LanTransport** для крупных payload'ов
-      (когда multicast pipe недостаточен и MTU < 1400 — на mobile-AP
-      это часто).
 
 ## P2 — приятные мелочи
 

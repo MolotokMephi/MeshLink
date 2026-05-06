@@ -208,6 +208,12 @@ class MeshService : Service() {
     suspend fun offerFile(peerId: String, uri: Uri, displayName: String): String =
         fileTransfer.offer(peerId, uri, displayName)
 
+    /** Called by the chat screen on entry; clears unread badges + dismisses tray. */
+    suspend fun markScopeRead(scopeId: String, scopeKind: String) {
+        db.chatDao().markScopeRead(scopeId, scopeKind)
+        Notifications.cancelForScope(this, scopeId)
+    }
+
     /**
      * Generic helper used by FileTransfer/Groups: encrypt arbitrary payload
      * with peer's session key, send via mesh router.
@@ -257,6 +263,7 @@ class MeshService : Service() {
             body = text,
             ts = msg.timestamp,
             delivery = "delivered",
+            read = false,
         ))
         Notifications.postMessage(
             this,
@@ -285,6 +292,7 @@ class MeshService : Service() {
             body = text,
             ts = msg.timestamp,
             delivery = "delivered",
+            read = false,
         ))
         val groupName = db.groupDao().byId(groupId)?.name ?: "Group"
         val senderName = router.peerById(msg.senderId)?.displayName ?: msg.senderName

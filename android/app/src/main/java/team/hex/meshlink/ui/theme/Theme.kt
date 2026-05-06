@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -128,6 +129,14 @@ fun MeshLinkTheme(
         colorScheme = colors,
         typography = MeshTypography,
         shapes = MeshShapes,
-        content = content,
-    )
+    ) {
+        // Surface anchors LocalContentColor so unstyled Text inherits the
+        // theme's onBackground colour. Without it Compose falls back to
+        // black — which read as illegible dark text on the aurora panel.
+        Surface(
+            color = Color.Transparent,
+            contentColor = colors.onBackground,
+            content = content,
+        )
+    }
 }

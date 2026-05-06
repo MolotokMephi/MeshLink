@@ -1,12 +1,15 @@
 package team.hex.meshlink.ui
 
 import android.Manifest
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.nfc.NfcAdapter
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -24,13 +27,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import team.hex.meshlink.MeshLinkApp
+import team.hex.meshlink.pairing.NfcPairing
 import team.hex.meshlink.service.MeshService
 import team.hex.meshlink.service.Notifications
 import team.hex.meshlink.ui.theme.MeshLinkTheme
 
 class MainActivity : ComponentActivity() {
 
+    private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var meshService: MeshService? = null
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -57,6 +67,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         readDeepLinkExtras(intent)
+        consumeNfcIntent(intent)
 
         setContent {
             val app = applicationContext as MeshLinkApp
@@ -88,6 +99,43 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         readDeepLinkExtras(intent)
+        consumeNfcIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Foreground dispatch grabs NFC tags while the activity is visible
+        // so they don't bounce out to the system NDEF chooser.
+        val adapter = NfcPairing.adapter(this) ?: return
+        val pi = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, javaClass).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_MUTABLE,
+        )
+        val filters = arrayOf(IntentFilter(NfcAdapter.ACTION_NDEF_DISCOVERED))
+        runCatching { adapter.enableForegroundDispatch(this, pi, filters, null) }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        runCatching { NfcPairing.adapter(this)?.disableForegroundDispatch(this) }
+    }
+
+    private fun consumeNfcIntent(intent: Intent?) {
+        val payload = NfcPairing.payloadFromIntent(intent) ?: return
+        // Trust the scanned identity once the service is bound. Schedule a
+        // retry on the activity scope so we don't drop the tag if the
+        // user opens us cold from an NFC tap.
+        activityScope.launch {
+            for (attempt in 0 until 20) {
+                val svc = meshService
+                if (svc != null) {
+                    svc.acceptPairing(payload)
+                    return@launch
+                }
+                kotlinx.coroutines.delay(150)
+            }
+        }
     }
 
     private fun readDeepLinkExtras(intent: Intent?) {
@@ -101,6 +149,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         runCatching { unbindService(connection) }
+        activityScope.cancel()
         super.onDestroy()
     }
 

@@ -54,6 +54,7 @@ fun OnboardingScreen(
             Text(
                 "Welcome to MeshLink",
                 style = MaterialTheme.typography.displayMedium,
+                color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 "An offline-first messenger that routes through every Bluetooth LE, " +

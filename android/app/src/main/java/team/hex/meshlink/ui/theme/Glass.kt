@@ -15,6 +15,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.border
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -54,9 +56,9 @@ fun AuroraBackground(modifier: Modifier = Modifier, content: @Composable () -> U
         label = "aurora-phase",
     )
     val cs = MaterialTheme.colorScheme
-    val a = cs.primary.copy(alpha = 0.38f)
-    val b = cs.tertiary.copy(alpha = 0.32f)
-    val c = cs.secondary.copy(alpha = 0.30f)
+    val a = cs.primary.copy(alpha = 0.55f)
+    val b = cs.tertiary.copy(alpha = 0.45f)
+    val c = cs.secondary.copy(alpha = 0.40f)
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -107,8 +109,8 @@ fun AuroraBackground(modifier: Modifier = Modifier, content: @Composable () -> U
 fun GlassSurface(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(20.dp),
-    tint: Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
-    borderColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f),
+    tint: Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+    borderColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f),
     content: @Composable () -> Unit,
 ) {
     Box(
@@ -128,7 +130,13 @@ fun GlassSurface(
                 shape = shape,
             )
             .glassBorder(borderColor, shape),
-    ) { content() }
+    ) {
+        // Anchor onSurface as the default Text color inside any glass card so
+        // unstyled labels still read against the translucent gradient.
+        CompositionLocalProvider(
+            LocalContentColor provides MaterialTheme.colorScheme.onSurface
+        ) { content() }
+    }
 }
 
 /**
