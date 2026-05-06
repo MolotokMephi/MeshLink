@@ -41,14 +41,26 @@
     <string name="action_voice_record">Удерживайте, чтобы записать</string>
     <string name="action_grant_microphone">Разрешить микрофон</string>
 
-    <!-- Sound pairing -->
-    <string name="sound_pairing_title">Сопряжение через звук</string>
-    <string name="sound_pairing_emit">Воспроизвести код звуком</string>
-    <string name="sound_pairing_listen">Прослушать код собеседника</string>
-    <string name="sound_pairing_listening">Слушаю…</string>
-    <string name="sound_pairing_emitting">Воспроизвожу…</string>
-    <string name="sound_pairing_done">Код успешно распознан</string>
-    <string name="sound_pairing_failed">Не удалось распознать звук. Поднесите устройство ближе к динамику.</string>
+    <!-- Nickname picker (first run) -->
+    <string name="nickname_title">Придумайте никнейм</string>
+    <string name="nickname_body">Под этим именем вас увидят соседи в списке устройств рядом. Сменить можно потом в настройках.</string>
+    <string name="nickname_random">Сгенерировать</string>
+    <string name="placeholder_nickname">Ваш никнейм</string>
+
+    <!-- NFC pairing -->
+    <string name="pairing_nfc_title">Сопряжение по NFC</string>
+    <string name="pairing_nfc_body">Поднесите устройство к собеседнику с открытым MeshLink — обменяемся ключами без QR-кода.</string>
+    <string name="pairing_nfc_unsupported">На этом устройстве нет NFC; используйте QR или вставьте код вручную.</string>
+    <string name="pairing_nfc_disabled">NFC выключен в системных настройках.</string>
+    <string name="pairing_nfc_open_settings">Открыть настройки NFC</string>
+
+    <!-- Peer needs pairing -->
+    <string name="peer_needs_pairing_title">Подтвердите соседа</string>
+    <string name="peer_needs_pairing_body">%1$s рядом, но вы ещё не обменивались ключами. Нужен QR / NFC / код, чтобы переписка осталась сквозной зашифрованной.</string>
+    <string name="peer_section_paired">Подтверждённые</string>
+    <string name="peer_section_discovered">Обнаружены (без подтверждения)</string>
+    <string name="peer_action_pair">Подтвердить соседа</string>
+    <string name="permission_already_granted">Все разрешения уже выданы.</string>
 
     <!-- Peer detail -->
     <string name="peer_detail_last_seen">Последний раз: %1$s</string>

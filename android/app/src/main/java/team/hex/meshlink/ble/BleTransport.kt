@@ -188,6 +188,15 @@ class BleTransport(private val context: Context) : Transport {
     }
 
     override fun broadcast(frame: ByteArray, hint: SendHint) {
+        // BLE writes are ~10 ms each in the best case; pushing a multi-MB
+        // file across the link queues thousands of fragments and starves
+        // every other frame for minutes — and from the user's POV the
+        // transfer just hangs. Drop oversized frames here; LAN / Wi-Fi
+        // Direct (and the WIFI_HINT auto-upgrade) carry files reliably.
+        if (frame.size > MAX_BLE_FRAME) {
+            Log.d(tag, "skip ${frame.size}B frame on BLE (cap=$MAX_BLE_FRAME)")
+            return
+        }
         val msgId = (System.nanoTime() and 0xFFFF).toInt()
         val notifyCh = notifyChar
         val server = gattServer
@@ -450,6 +459,15 @@ class BleTransport(private val context: Context) : Transport {
     private inline fun <T> requirePerms(block: () -> T): T = block()
 
     private data class BackoffState(val attempt: Int, val nextAttemptAtMs: Long)
+
+    companion object {
+        /**
+         * Largest frame BLE will carry. Picked to fit a couple of mesh-router
+         * envelopes (chat text + ack metadata) without spending the link on
+         * file chunks — those flow through LanTransport / Wi-Fi Direct.
+         */
+        const val MAX_BLE_FRAME = 4 * 1024
+    }
 }
 
 /**

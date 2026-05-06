@@ -6,14 +6,17 @@ import android.util.Log
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
-import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +44,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -48,17 +52,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.PlanarYUVLuminanceSource
-import com.google.zxing.BarcodeFormat
 import com.google.zxing.common.HybridBinarizer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -66,26 +71,26 @@ import team.hex.meshlink.R
 import team.hex.meshlink.pairing.PairingPayload
 import team.hex.meshlink.ui.theme.GlassSurface
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
- * Live camera QR scanner. Drives a CameraX preview and feeds frames into
- * ZXing's MultiFormatReader, then hands a parsed `meshlink:1:…` payload
- * back via [onScanned].
+ * Live camera QR scanner.
  *
- * Robustness notes:
- *   - We pick the QR_CODE format explicitly + TRY_HARDER. Without the
- *     format hint, MultiFormatReader spends time on 1D barcodes that we
- *     never accept anyway; with it, slow Samsung mid-range cameras start
- *     locking on within a second.
- *   - YUV row-stride padding is honoured so portrait frames decode
- *     correctly. Without this, on most Samsungs every row past the first
- *     was misaligned and ZXing never found the finder pattern — the user-
- *     visible symptom was "scanner sees nothing".
- *   - We rotate the luminance source through 90° / 180° / 270° if the
- *     unrotated frame failed. CameraX delivers sensor-native orientation,
- *     so a phone held in portrait yields a sideways image; ZXing's QR
- *     finder is rotation-tolerant in theory but real camera frames need
- *     the rotation to actually lock on.
+ * Specifically engineered to lock on to a `meshlink:1:…` payload on the
+ * cheapest current Android hardware:
+ *   - Y-plane row stride is honoured by *copying out* a tightly packed
+ *     luminance buffer (rather than passing the padded stride to ZXing,
+ *     which used to misalign every row past the first on Samsung devices).
+ *   - Format hint pinned to QR_CODE so MultiFormatReader doesn't waste
+ *     decode attempts on 1D barcodes the app would reject anyway.
+ *   - Inverted-luminance fallback handles white-on-black QRs printed by
+ *     dark-mode pairing screens.
+ *   - Tap-to-focus: a tap on the preview triggers a manual AF/AE round
+ *     so the user can fix soft-focus frames that the continuous-AF mode
+ *     ignores when the phone is held very still.
+ *   - Camera-init / decode counters surface visibly so the user knows
+ *     the scanner is actually trying when nothing happens within a
+ *     second of opening.
  */
 @Composable
 fun QrScannerScreen(
@@ -132,13 +137,10 @@ fun QrScannerScreen(
                 onPayload = { payload ->
                     val parsed = PairingPayload.decodeOrNull(payload)
                     if (parsed != null) {
-                        // Stash the error before navigating away so a
-                        // not-meshlink toast doesn't briefly flash.
                         error = null
                         onScanned(parsed)
                     } else {
                         error = errNotMeshlink
-                        // Auto-clear so the user can re-aim.
                         scope.launch {
                             delay(2_500)
                             error = null
@@ -181,6 +183,10 @@ private fun CameraScanner(onPayload: (String) -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val analyzerExecutor = remember { Executors.newSingleThreadExecutor() }
     var lastSeen by remember { mutableStateOf<String?>(null) }
+    var status by remember { mutableStateOf("Запуск камеры…") }
+    var framesAnalyzed by remember { mutableIntStateOf(0) }
+    var camera by remember { mutableStateOf<Camera?>(null) }
+    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
     Box(
         modifier = Modifier
@@ -198,37 +204,40 @@ private fun CameraScanner(onPayload: (String) -> Unit) {
                 factory = { c ->
                     val previewView = PreviewView(c).apply {
                         scaleType = PreviewView.ScaleType.FILL_CENTER
+                        // COMPATIBLE backs the preview with a SurfaceView,
+                        // which avoids the black-frame bug on some Samsung
+                        // ROMs that ship a quirky TextureView pipeline.
                         implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                     }
+                    previewViewRef = previewView
                     val providerFuture = ProcessCameraProvider.getInstance(c)
                     providerFuture.addListener({
                         val provider = try {
                             providerFuture.get()
                         } catch (t: Throwable) {
+                            status = "Камера недоступна: ${t.message}"
                             Log.w(TAG, "camera provider failed: $t")
                             return@addListener
                         }
-                        val preview = androidx.camera.core.Preview.Builder().build().apply {
-                            setSurfaceProvider(previewView.surfaceProvider)
-                        }
-                        // 720p analysis frames give us enough resolution
-                        // for QR finder-pattern detection on cheap rear
-                        // cameras while keeping decode latency bounded.
+                        // 4:3 frames keep finder-pattern detection happy on
+                        // most rear cameras; CameraX picks the closest match
+                        // the device actually supports.
                         val resolutionSelector = ResolutionSelector.Builder()
-                            .setResolutionStrategy(
-                                ResolutionStrategy(
-                                    Size(1280, 720),
-                                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
-                                )
-                            )
+                            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                             .build()
+                        val preview = androidx.camera.core.Preview.Builder()
+                            .setResolutionSelector(resolutionSelector)
+                            .build().apply {
+                                setSurfaceProvider(previewView.surfaceProvider)
+                            }
                         val analysis = ImageAnalysis.Builder()
                             .setResolutionSelector(resolutionSelector)
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                            .setTargetRotation(previewView.display?.rotation ?: 0)
                             .build()
                         analysis.setAnalyzer(analyzerExecutor) { proxy: ImageProxy ->
                             try {
+                                framesAnalyzed += 1
                                 val payload = decodeImage(proxy)
                                 if (payload != null && payload != lastSeen) {
                                     lastSeen = payload
@@ -240,19 +249,52 @@ private fun CameraScanner(onPayload: (String) -> Unit) {
                         }
                         runCatching {
                             provider.unbindAll()
-                            provider.bindToLifecycle(
+                            camera = provider.bindToLifecycle(
                                 lifecycleOwner,
                                 CameraSelector.DEFAULT_BACK_CAMERA,
                                 preview, analysis,
                             )
-                        }.onFailure { Log.w(TAG, "bindToLifecycle failed: $it") }
+                            status = "Сканирую QR-код…"
+                        }.onFailure {
+                            status = "Не удалось привязать камеру"
+                            Log.w(TAG, "bindToLifecycle failed: $it")
+                        }
                     }, ContextCompat.getMainExecutor(c))
                     previewView
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    // Tap-to-focus: ask the camera to AF/AE on the touched
+                    // point. CameraX caps the metering action at five
+                    // seconds, which is plenty to lock on a stationary QR.
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            val pv = previewViewRef ?: return@detectTapGestures
+                            val factory = pv.meteringPointFactory
+                            val point = factory.createPoint(offset.x, offset.y)
+                            val action = FocusMeteringAction.Builder(
+                                point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+                            ).setAutoCancelDuration(5, TimeUnit.SECONDS).build()
+                            runCatching { camera?.cameraControl?.startFocusAndMetering(action) }
+                        }
+                    },
             )
-            // Reticle overlay so the user knows where to aim.
             ScannerReticle(modifier = Modifier.fillMaxSize())
+        }
+        // Status pill — explicit feedback so the user can tell the
+        // scanner is actually running. "Сканирую QR-код… N кадров"
+        // beats blank screen when nothing matches.
+        GlassSurface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp),
+            shape = RoundedCornerShape(999.dp),
+        ) {
+            Text(
+                "$status · $framesAnalyzed кадров",
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
     DisposableEffect(Unit) {
@@ -274,16 +316,12 @@ private fun ScannerReticle(modifier: Modifier = Modifier) {
         val top = (size.height - side) / 2f
         val corner = side * 0.12f
         val w = 6f
-        // Top-left
         drawLine(accent, Offset(left, top + corner), Offset(left, top), w)
         drawLine(accent, Offset(left, top), Offset(left + corner, top), w)
-        // Top-right
         drawLine(accent, Offset(left + side - corner, top), Offset(left + side, top), w)
         drawLine(accent, Offset(left + side, top), Offset(left + side, top + corner), w)
-        // Bottom-left
         drawLine(accent, Offset(left, top + side - corner), Offset(left, top + side), w)
         drawLine(accent, Offset(left, top + side), Offset(left + corner, top + side), w)
-        // Bottom-right
         drawLine(accent, Offset(left + side - corner, top + side), Offset(left + side, top + side), w)
         drawLine(accent, Offset(left + side, top + side), Offset(left + side, top + side - corner), w)
     }
@@ -292,23 +330,50 @@ private fun ScannerReticle(modifier: Modifier = Modifier) {
 private const val TAG = "QrScanner"
 
 /**
- * Try to decode a QR from a CameraX [ImageProxy]. We honour rowStride
- * padding so portrait frames on Samsung devices (which always pad the Y
- * plane) decode correctly; before this, every row past the first was
- * misaligned and ZXing never found the finder pattern.
+ * Decode a QR from a CameraX [ImageProxy].
  *
- * If the regular HybridBinarizer pass misses (low contrast, screen
- * glare), we retry with the inverted luminance source — works around
- * dark-mode QRs printed white-on-black.
+ * We deliberately *unpad* the Y plane into a fresh `width*height` buffer
+ * instead of trusting `PlanarYUVLuminanceSource` to honour `rowStride` —
+ * on most Samsung devices the latter path silently misaligns rows past
+ * the first and ZXing never finds a finder pattern. Cost is one extra
+ * memcpy per frame which the hot loop can absorb.
+ *
+ * Tries the unrotated frame first, then the inverted luminance for
+ * white-on-black QRs (dark-mode pairing screens).
  */
 private fun decodeImage(proxy: ImageProxy): String? {
     val plane = proxy.planes.firstOrNull() ?: return null
-    val buffer = plane.buffer
-    val data = ByteArray(buffer.remaining()).also { buffer.get(it) }
-    val rowStride = plane.rowStride.coerceAtLeast(proxy.width)
     val width = proxy.width
     val height = proxy.height
     if (width <= 0 || height <= 0) return null
+
+    val rowStride = plane.rowStride
+    val pixelStride = plane.pixelStride
+    val rawBuffer = plane.buffer
+    val raw = ByteArray(rawBuffer.remaining()).also { rawBuffer.get(it) }
+
+    // Pack into a tight luminance buffer regardless of stride / pixel
+    // stride. YUV_420_888's Y plane usually has pixelStride==1, but the
+    // contract allows any value, so handle both.
+    val packed = ByteArray(width * height)
+    if (pixelStride == 1 && rowStride == width) {
+        System.arraycopy(raw, 0, packed, 0, packed.size)
+    } else if (pixelStride == 1) {
+        var src = 0
+        var dst = 0
+        for (row in 0 until height) {
+            System.arraycopy(raw, src, packed, dst, width)
+            src += rowStride
+            dst += width
+        }
+    } else {
+        for (row in 0 until height) {
+            val rowStart = row * rowStride
+            for (col in 0 until width) {
+                packed[row * width + col] = raw[rowStart + col * pixelStride]
+            }
+        }
+    }
 
     val reader = MultiFormatReader().apply {
         setHints(
@@ -318,12 +383,10 @@ private fun decodeImage(proxy: ImageProxy): String? {
             )
         )
     }
-
     val source = PlanarYUVLuminanceSource(
-        data, rowStride, height,
+        packed, width, height,
         0, 0, width, height, false,
     )
-    // First try: regular polarity. Second try: inverted (white-on-black QRs).
     runCatching {
         return reader.decodeWithState(BinaryBitmap(HybridBinarizer(source))).text
     }

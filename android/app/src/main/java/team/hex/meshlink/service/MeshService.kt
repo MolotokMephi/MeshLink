@@ -42,7 +42,6 @@ import team.hex.meshlink.storage.MeshDb
 import team.hex.meshlink.storage.PeerRow
 import team.hex.meshlink.storage.RoomSeenStore
 import team.hex.meshlink.transport.LanTransport
-import team.hex.meshlink.transport.LoraTransport
 import team.hex.meshlink.transport.SendHint
 import team.hex.meshlink.transport.Transport
 import team.hex.meshlink.transport.WifiDirectTransport
@@ -106,7 +105,6 @@ class MeshService : Service() {
             BleTransport(this),
             LanTransport(this),
             WifiDirectTransport(this),
-            LoraTransport(this),
         )
 
         pumpJob = scope.launch {
@@ -432,12 +430,18 @@ class MeshService : Service() {
 
     private suspend fun collectPeers() {
         router.peerEvents.collect { p: PeerIdentity ->
+            // Preserve the existing `trusted` flag — `upsert` would
+            // otherwise stomp the pairing state every time a new
+            // ANNOUNCE arrives, which downgraded already-paired peers
+            // back to "discovered" within seconds.
+            val existing = db.peerDao().byId(p.nodeId)
             db.peerDao().upsert(PeerRow(
                 nodeId = p.nodeId,
                 name = p.displayName,
                 edPub = p.edPub,
                 xPub = p.xPub,
                 lastSeenMs = p.lastSeenMs,
+                trusted = existing?.trusted ?: false,
             ))
         }
     }

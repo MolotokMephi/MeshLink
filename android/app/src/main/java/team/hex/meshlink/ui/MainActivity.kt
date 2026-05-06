@@ -89,8 +89,12 @@ class MainActivity : ComponentActivity() {
                 if (!onboardingDone.value) {
                     OnboardingScreen(
                         modifier = Modifier.fillMaxSize(),
-                        onDone = {
+                        onDone = { nickname ->
+                            // Onboarding has already persisted the name via
+                            // identityStore.setDisplayName; nudge the service
+                            // so the next ANNOUNCE picks it up.
                             app.identityStore.setOnboardingDone()
+                            meshService?.setDisplayName(nickname)
                             onboardingDone.value = true
                             ensurePermissionsAndStart()
                         },
@@ -168,11 +172,41 @@ class MainActivity : ComponentActivity() {
 
     /** Public hook for the UI: re-prompt for whatever's still missing. */
     fun requestMeshPermissions() {
+        val hadAllAlready = missingMeshPermissions().isEmpty()
         ensurePermissionsAndStart()
         // Even if the OS perms are already granted, transports may have
         // started in Failed state earlier (Bluetooth off at the time, etc.).
         // Kick them to retry now that the user has come back to fix things.
         meshService?.restartTransports()
+        if (hadAllAlready) {
+            // Without feedback the button looks dead — surface a toast so
+            // the user knows the tap was actually consumed.
+            android.widget.Toast.makeText(
+                this,
+                getString(team.hex.meshlink.R.string.permission_already_granted),
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    private fun missingMeshPermissions(): List<String> {
+        val needed = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            needed += listOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        } else {
+            needed += Manifest.permission.ACCESS_FINE_LOCATION
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            needed += Manifest.permission.POST_NOTIFICATIONS
+            needed += Manifest.permission.NEARBY_WIFI_DEVICES
+        }
+        return needed.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
     }
 
     /**
@@ -190,23 +224,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun ensurePermissionsAndStart() {
-        val needed = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            needed += listOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_ADVERTISE,
-                Manifest.permission.BLUETOOTH_CONNECT,
-            )
-        } else {
-            needed += Manifest.permission.ACCESS_FINE_LOCATION
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            needed += Manifest.permission.POST_NOTIFICATIONS
-            needed += Manifest.permission.NEARBY_WIFI_DEVICES
-        }
-        val missing = needed.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
+        val missing = missingMeshPermissions()
         if (missing.isEmpty()) startServiceAndBind()
         else permissionRequest.launch(missing.toTypedArray())
     }

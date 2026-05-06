@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
@@ -74,7 +75,6 @@ import kotlinx.coroutines.launch
 import team.hex.meshlink.MeshLinkApp
 import team.hex.meshlink.R
 import team.hex.meshlink.pairing.PairingPayload
-import team.hex.meshlink.pairing.SoundPairing
 import team.hex.meshlink.service.MeshService
 import team.hex.meshlink.service.Notifications
 import team.hex.meshlink.storage.ChatMessageRow
@@ -129,7 +129,15 @@ fun MeshNavHost(
                 onPair = { screen = Screen.Pairing },
                 onSettings = { screen = Screen.Settings },
                 onNewGroup = { screen = Screen.NewGroup },
-                onPeer = { p -> screen = Screen.Chat(p.nodeId, MeshService.SCOPE_PEER, p.name) },
+                onPeer = { p ->
+                    // Untrusted peers haven't completed a key exchange,
+                    // so messages can't be E2E-encrypted yet — gate the
+                    // chat behind pairing instead of letting the user
+                    // type into a black hole.
+                    screen = if (p.trusted) {
+                        Screen.Chat(p.nodeId, MeshService.SCOPE_PEER, p.name)
+                    } else Screen.Pairing
+                },
                 onGroup = { g -> screen = Screen.Chat(g.groupId, MeshService.SCOPE_GROUP, g.name) },
             )
             Screen.Pairing -> PairingScreen(
@@ -462,7 +470,7 @@ private fun PeerList(
     onPair: () -> Unit,
 ) {
     val peers by db.peerDao().streamAll().collectAsState(initial = emptyList())
-    val ctx = LocalContext.current
+    val (paired, discovered) = peers.partition { it.trusted }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -481,9 +489,75 @@ private fun PeerList(
                     )
                 }
             }
-        } else {
-            items(peers, key = { it.nodeId }) { p ->
+        }
+        if (paired.isNotEmpty()) {
+            item("paired-section") {
+                Text(
+                    stringResource(R.string.peer_section_paired),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            items(paired, key = { "p-" + it.nodeId }) { p ->
                 PeerCard(p, getService = getService, onClick = { onClick(p) })
+            }
+        }
+        if (discovered.isNotEmpty()) {
+            item("discovered-section") {
+                Text(
+                    stringResource(R.string.peer_section_discovered),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            items(discovered, key = { "d-" + it.nodeId }) { p ->
+                DiscoveredPeerCard(p, onPair = onPair)
+            }
+        }
+    }
+}
+
+/**
+ * A peer we've heard ANNOUNCE from but haven't completed a key exchange
+ * with yet. Tapping doesn't open a chat — without a verified identity
+ * the messages would either drop (because the router rejects unsigned
+ * envelopes from unknown peers) or land in plaintext, both of which
+ * are wrong defaults. Instead the card sends the user to the pairing
+ * screen so they can scan the peer's QR / NFC / paste code.
+ */
+@Composable
+private fun DiscoveredPeerCard(
+    p: PeerRow,
+    onPair: () -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onPair() },
+        shape = RoundedCornerShape(20.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(seed = p.nodeId)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(p.name, style = MaterialTheme.typography.titleMedium)
+                Text(p.nodeId,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.peer_action_pair),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            OutlinedButton(onClick = onPair) {
+                Text(stringResource(R.string.action_pair))
             }
         }
     }
@@ -833,7 +907,8 @@ private fun PairingScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(WindowInsets.systemBars.asPaddingValues()),
+            .padding(WindowInsets.systemBars.asPaddingValues())
+            .imePadding(),
     ) {
         GlassHeader(
             title = stringResource(R.string.pairing_title),
@@ -884,32 +959,12 @@ private fun PairingScreen(
                     Text(stringResource(R.string.pairing_trust_a_peer),
                         style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { scanning = true },
-                            modifier = Modifier.weight(1f),
-                        ) { Text(stringResource(R.string.pairing_scan_qr)) }
-                    }
+                    Button(
+                        onClick = { scanning = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(R.string.pairing_scan_qr)) }
                     Spacer(Modifier.height(8.dp))
-                    SoundPairingControls(
-                        ourPayload = ourString,
-                        onPairedSilently = { decoded ->
-                            val payload = PairingPayload.decodeOrNull(decoded)
-                            if (payload == null) {
-                                status = ctx.getString(R.string.sound_pairing_failed)
-                            } else {
-                                val svc = getService()
-                                if (svc != null) {
-                                    scope.launch {
-                                        svc.acceptPairing(payload)
-                                        status = ctx.getString(R.string.status_trusted,
-                                            payload.name, payload.nodeId)
-                                    }
-                                }
-                            }
-                        },
-                        onStatus = { status = it },
-                    )
+                    NfcPairingHint()
                     Spacer(Modifier.height(12.dp))
                     Text(stringResource(R.string.pairing_or_paste),
                         style = MaterialTheme.typography.bodySmall,
@@ -1007,7 +1062,8 @@ private fun SettingsScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(WindowInsets.systemBars.asPaddingValues()),
+            .padding(WindowInsets.systemBars.asPaddingValues())
+            .imePadding(),
     ) {
         GlassHeader(
             title = stringResource(R.string.settings_title),
@@ -1154,7 +1210,8 @@ private fun NewGroupScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(WindowInsets.systemBars.asPaddingValues()),
+            .padding(WindowInsets.systemBars.asPaddingValues())
+            .imePadding(),
     ) {
         GlassHeader(
             title = stringResource(R.string.new_group_title),
@@ -1275,7 +1332,11 @@ private fun ChatScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(WindowInsets.systemBars.asPaddingValues()),
+            .padding(WindowInsets.systemBars.asPaddingValues())
+            // Keep the composer above the soft keyboard. enableEdgeToEdge
+            // disables the legacy adjustResize behaviour, so we have to
+            // ask Compose for IME-aware padding explicitly.
+            .imePadding(),
     ) {
         GlassHeader(
             title = title,
@@ -1684,75 +1745,43 @@ private fun GroupInfoScreen(
     }
 }
 
-// ------------------------------- Sound pairing -------------------------------
+// ------------------------------- NFC pairing hint -------------------------------
 
+/**
+ * Inline hint that shows whether NFC is available + powered on, with a
+ * shortcut to system NFC settings. Actual tag-read happens via
+ * [MainActivity]'s foreground dispatch — when the user taps a peer's
+ * phone the OS hands us an NDEF intent which [acceptPairing] consumes.
+ */
 @Composable
-private fun SoundPairingControls(
-    ourPayload: String,
-    onPairedSilently: (String) -> Unit,
-    onStatus: (String) -> Unit,
-) {
+private fun NfcPairingHint() {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-
-    val emittingMsg = stringResource(R.string.sound_pairing_emitting)
-    val listeningMsg = stringResource(R.string.sound_pairing_listening)
-    val failedMsg = stringResource(R.string.sound_pairing_failed)
-
-    val micRequest = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            busy = true
-            onStatus(listeningMsg)
-            scope.launch {
-                val decoded = withContextIO { SoundPairing.listen() }
-                busy = false
-                if (decoded != null) onPairedSilently(decoded)
-                else onStatus(failedMsg)
+    val activity = ctx as? MainActivity
+    val adapter = remember { activity?.let { team.hex.meshlink.pairing.NfcPairing.adapter(it) } }
+    GlassSurface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(stringResource(R.string.pairing_nfc_title),
+                style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            val body = when {
+                adapter == null -> stringResource(R.string.pairing_nfc_unsupported)
+                !adapter.isEnabled -> stringResource(R.string.pairing_nfc_disabled)
+                else -> stringResource(R.string.pairing_nfc_body)
+            }
+            Text(body,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+            if (adapter != null && !adapter.isEnabled) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = {
+                    runCatching {
+                        ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_NFC_SETTINGS))
+                    }
+                }) { Text(stringResource(R.string.pairing_nfc_open_settings)) }
             }
         }
     }
-
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(
-            onClick = {
-                if (busy) return@OutlinedButton
-                busy = true
-                onStatus(emittingMsg)
-                scope.launch {
-                    withContextIO { SoundPairing.emit(ourPayload) }
-                    busy = false
-                    onStatus("")
-                }
-            },
-            enabled = !busy,
-            modifier = Modifier.weight(1f),
-        ) { Text(stringResource(R.string.sound_pairing_emit)) }
-        OutlinedButton(
-            onClick = {
-                if (busy) return@OutlinedButton
-                if (ContextCompat.checkSelfPermission(
-                        ctx, android.Manifest.permission.RECORD_AUDIO
-                    ) == PackageManager.PERMISSION_GRANTED) {
-                    busy = true
-                    onStatus(listeningMsg)
-                    scope.launch {
-                        val decoded = withContextIO { SoundPairing.listen() }
-                        busy = false
-                        if (decoded != null) onPairedSilently(decoded)
-                        else onStatus(failedMsg)
-                    }
-                } else {
-                    micRequest.launch(android.Manifest.permission.RECORD_AUDIO)
-                }
-            },
-            enabled = !busy,
-            modifier = Modifier.weight(1f),
-        ) { Text(stringResource(R.string.sound_pairing_listen)) }
-    }
 }
-
-private suspend fun <T> withContextIO(block: () -> T): T =
-    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { block() }
