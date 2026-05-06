@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MeshLink</string>
+
+    <!-- Foreground service notification -->
+    <string name="notif_channel_name">Сервис меш-сети</string>
+    <string name="notif_title">MeshLink: меш активен</string>
+    <string name="notif_text">Ищу соседей и ретранслирую сообщения через Bluetooth LE</string>
+
+    <!-- Push notifications for chat messages -->
+    <string name="notif_messages_channel">Сообщения</string>
+    <string name="notif_messages_desc">Новые сообщения от собеседников и групп</string>
+    <string name="notif_pairing_channel">Сопряжение</string>
+
+    <!-- Tabs -->
+    <string name="tab_chats">Чаты</string>
+    <string name="tab_peers">Соседи</string>
+    <string name="tab_groups">Группы</string>
+
+    <!-- Common -->
+    <string name="action_back">Назад</string>
+    <string name="action_save">Сохранить</string>
+    <string name="action_send">Отправить</string>
+    <string name="action_attach">Файл</string>
+    <string name="action_search">Поиск</string>
+    <string name="action_close">Закрыть</string>
+    <string name="action_continue">Продолжить</string>
+    <string name="action_pair">Пара</string>
+    <string name="action_settings">Настройки</string>
+    <string name="action_new_group">Новая группа</string>
+    <string name="action_create_group">Создать группу</string>
+    <string name="action_pair_peer">Добавить собеседника</string>
+    <string name="action_trust_peer">Доверять</string>
+    <string name="action_scan_qr">Сканировать QR</string>
+    <string name="action_grant">Выдать разрешения</string>
+    <string name="action_grant_camera">Разрешить камеру</string>
+    <string name="action_apply_rekey">Применить (сменить ключ)</string>
+    <string name="action_clear_history">Очистить историю чатов</string>
+    <string name="action_show_recovery">Показать фразу восстановления</string>
+    <string name="action_whitelist">Разрешить</string>
+
+    <!-- Placeholders -->
+    <string name="placeholder_message">Сообщение…</string>
+    <string name="placeholder_search_messages">Поиск по сообщениям…</string>
+    <string name="placeholder_pairing">meshlink:1:…</string>
+    <string name="placeholder_your_name">Ваше имя</string>
+    <string name="placeholder_group_name">Классная группа</string>
+
+    <!-- Empty / status -->
+    <string name="empty_peers">Ищу ближайшие узлы MeshLink…</string>
+    <string name="empty_groups">Пока нет групп</string>
+    <string name="empty_chats">Пока нет чатов</string>
+    <string name="empty_chats_hint">Добавьте собеседника или создайте группу, чтобы начать общаться без интернета.</string>
+    <string name="empty_messages">Сообщений пока нет — поздоровайтесь!</string>
+    <string name="empty_no_matches">Ничего не найдено</string>
+    <string name="status_saved">Сохранено</string>
+    <string name="status_history_cleared">История чатов очищена</string>
+    <string name="status_invalid_pairing">Неверный код сопряжения</string>
+    <string name="status_qr_not_meshlink">Это не QR-код MeshLink.</string>
+    <string name="status_service_not_bound">Сервис ещё не подключён — попробуйте снова.</string>
+    <string name="status_rekey_done">Ключ группы обновлён</string>
+    <string name="status_trusted">%1$s (%2$s) теперь в списке доверенных</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_title">Добро пожаловать в MeshLink</string>
+    <string name="onboarding_body">Офлайн-мессенджер, который маршрутизирует сообщения через все доступные радио рядом: Bluetooth LE, Wi-Fi LAN и Wi-Fi Direct. Без серверов, без мобильных данных.</string>
+    <string name="onboarding_ble_title">Bluetooth LE + Wi-Fi соседи</string>
+    <string name="onboarding_ble_body">Нужны разрешения на сканирование, рекламу и подключение Bluetooth, чтобы телефон мог найти ближайшие устройства MeshLink и обмениваться с ними сообщениями. Спросим у системы, как только вы нажмёте «Продолжить».</string>
+    <string name="onboarding_wifi_title">Соседние Wi-Fi (Android 13+)</string>
+    <string name="onboarding_wifi_body">Включает быстрые передачи через Wi-Fi Direct без раскрытия физического местоположения.</string>
+    <string name="onboarding_e2e_title">Сквозное шифрование</string>
+    <string name="onboarding_e2e_body">Каждое сообщение подписывается и шифруется прямо на устройстве. Приватный ключ никогда не покидает телефон — резервная копия делается из Настроек.</string>
+    <string name="onboarding_battery_title">Меш всегда онлайн</string>
+    <string name="onboarding_battery_body">Отключите оптимизацию батареи для MeshLink, чтобы меш продолжал ретранслировать сообщения, пока экран заблокирован.</string>
+
+    <!-- Pairing -->
+    <string name="pairing_title">Сопряжение</string>
+    <string name="pairing_your_code">Ваш код сопряжения</string>
+    <string name="pairing_share_hint">Покажите этот QR-код или передайте строку любым другим способом — собеседник сможет добавить вас в доверенные, даже не подключаясь к меш-сети.</string>
+    <string name="pairing_trust_a_peer">Добавить собеседника</string>
+    <string name="pairing_or_paste">или вставьте код ниже</string>
+    <string name="pairing_qr_too_large">(QR-код слишком большой; передайте строку ниже)</string>
+    <string name="pairing_camera_perm_title">Нужен доступ к камере</string>
+    <string name="pairing_camera_perm_body">Разрешите камеру, чтобы отсканировать QR-код собеседника. Можно также вернуться и вставить код вручную.</string>
+    <string name="pairing_scan_qr">Сканировать QR</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Настройки</string>
+    <string name="settings_display_name">Отображаемое имя</string>
+    <string name="settings_node_id">Ваш идентификатор узла: %1$s</string>
+    <string name="settings_dynamic_color">Цвета Material You</string>
+    <string name="settings_dynamic_color_body">Использовать палитру обоев системы на Android 12+.</string>
+    <string name="settings_topology">Топология меш-сети</string>
+    <string name="settings_topology_unbound">Сервис ещё не подключён.</string>
+    <string name="settings_topology_summary">%1$d прямых соседей, %2$d узлов известно, %3$d связей.</string>
+    <string name="settings_identity_backup">Резервная копия личности</string>
+    <string name="settings_identity_backup_body">Сохраните фразу восстановления. Любой, у кого она есть, сможет выдавать себя за вас — храните её в надёжном месте.</string>
+    <string name="settings_storage">Хранилище</string>
+
+    <!-- New group -->
+    <string name="new_group_title">Новая группа</string>
+    <string name="new_group_name">Название группы</string>
+    <string name="new_group_add_members">Добавьте участников</string>
+
+    <!-- Group info -->
+    <string name="group_info_members">Участники (%1$d)</string>
+    <string name="group_info_rekey_hint">При удалении участника ключ группы меняется, и он больше не сможет расшифровать новые сообщения.</string>
+    <string name="group_info_member">участник</string>
+    <string name="group_info_will_add">будет добавлен</string>
+    <string name="group_info_will_remove">будет удалён</string>
+    <string name="group_info_in">в группе</string>
+    <string name="group_info_not_found">Группа не найдена.</string>
+
+    <!-- Chat -->
+    <string name="chat_you_prefix">Вы: </string>
+    <string name="chat_now">сейчас</string>
+    <string name="chat_minutes">%1$d мин</string>
+    <string name="chat_hours">%1$d ч</string>
+    <string name="chat_days">%1$d д</string>
+    <string name="chat_unread_overflow">99+</string>
+
+    <!-- Live-link badges -->
+    <string name="link_direct">напрямую</string>
+    <string name="link_relay">через ретрансляцию</string>
+    <string name="link_unknown">нет маршрута</string>
+
+    <!-- Identity-conflict notification body -->
+    <string name="trust_warning_title">Личность изменена: %1$s</string>
+    <string name="trust_warning_text">Подписной ключ этого собеседника изменился. Возможно, он сбросил устройство — или кто-то выдаёт себя за него. Повторите сопряжение, чтобы восстановить доверие.</string>
+
+    <!-- QR scanner -->
+    <string name="qr_scan_title">Сканирование QR</string>
+</resources>

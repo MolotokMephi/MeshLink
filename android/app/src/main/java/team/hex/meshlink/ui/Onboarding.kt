@@ -30,9 +30,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import team.hex.meshlink.R
 import team.hex.meshlink.ui.theme.AuroraBackground
 import team.hex.meshlink.ui.theme.GlassSurface
+import team.hex.meshlink.ui.theme.GradientText
 
 /**
  * First-run intro. Sets the tone with the same liquid-glass language and
@@ -63,45 +66,38 @@ fun OnboardingScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "Welcome to MeshLink",
+                GradientText(
+                    text = stringResource(R.string.onboarding_title),
                     style = MaterialTheme.typography.displayMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
-                    "An offline-first messenger that routes through every Bluetooth LE, " +
-                        "Wi-Fi LAN and Wi-Fi Direct radio nearby — no servers, no cell data.",
+                    stringResource(R.string.onboarding_body),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
                 )
                 Spacer(Modifier.height(8.dp))
                 FeatureRow(
                     icon = Icons.Filled.Bluetooth,
-                    title = "Bluetooth LE + Wi-Fi peers",
-                    body = "We need scan/advertise/connect permissions so your phone " +
-                        "can find and talk to nearby MeshLink devices. We'll ask once " +
-                        "you tap Continue.",
+                    title = stringResource(R.string.onboarding_ble_title),
+                    body = stringResource(R.string.onboarding_ble_body),
                 )
                 FeatureRow(
                     icon = Icons.Filled.Wifi,
-                    title = "Nearby Wi-Fi (Android 13+)",
-                    body = "Opens up Wi-Fi Direct fat-pipe transfers without exposing " +
-                        "physical location.",
+                    title = stringResource(R.string.onboarding_wifi_title),
+                    body = stringResource(R.string.onboarding_wifi_body),
                 )
                 FeatureRow(
                     icon = Icons.Filled.Lock,
-                    title = "End-to-end encryption",
-                    body = "Every chat is signed and encrypted on-device. Your private " +
-                        "key never leaves the device — back it up from Settings.",
+                    title = stringResource(R.string.onboarding_e2e_title),
+                    body = stringResource(R.string.onboarding_e2e_body),
                 )
                 FeatureRow(
                     icon = Icons.Filled.BatteryFull,
-                    title = "Always-on mesh",
-                    body = "Whitelist MeshLink from battery optimization so the mesh " +
-                        "keeps relaying messages while your screen is locked.",
+                    title = stringResource(R.string.onboarding_battery_title),
+                    body = stringResource(R.string.onboarding_battery_body),
                     trailing = {
                         OutlinedButton(onClick = onRequestBatteryWhitelist) {
-                            Text("Whitelist")
+                            Text(stringResource(R.string.action_whitelist))
                         }
                     },
                 )
@@ -121,7 +117,7 @@ fun OnboardingScreen(
                     Button(
                         onClick = onDone,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Continue") }
+                    ) { Text(stringResource(R.string.action_continue)) }
                 }
             }
         }

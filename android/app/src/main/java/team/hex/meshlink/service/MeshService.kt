@@ -294,7 +294,8 @@ class MeshService : Service() {
             delivery = "delivered",
             read = false,
         ))
-        val groupName = db.groupDao().byId(groupId)?.name ?: "Group"
+        val groupName = db.groupDao().byId(groupId)?.name
+            ?: getString(R.string.tab_groups)
         val senderName = router.peerById(msg.senderId)?.displayName ?: msg.senderName
         Notifications.postMessage(
             this,
@@ -343,9 +344,8 @@ class MeshService : Service() {
             Notifications.postTrustWarning(
                 ctx = this,
                 scopeId = conflict.current.nodeId,
-                title = "Identity changed for ${conflict.current.displayName}",
-                text = "This peer's signing key changed. They may have reset their device — " +
-                    "or someone is impersonating them. Re-pair to restore trust.",
+                title = getString(R.string.trust_warning_title, conflict.current.displayName),
+                text = getString(R.string.trust_warning_text),
             )
         }
     }

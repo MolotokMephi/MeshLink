@@ -3,7 +3,7 @@
     <string name="app_name">MeshLink</string>
 
     <!-- Foreground service notification -->
-    <string name="notif_channel_id">meshlink_service</string>
+    <string name="notif_channel_id" translatable="false">meshlink_service</string>
     <string name="notif_channel_name">Mesh service</string>
     <string name="notif_title">MeshLink mesh active</string>
     <string name="notif_text">Discovering peers and relaying messages over Bluetooth LE</string>
@@ -13,36 +13,122 @@
     <string name="notif_messages_desc">New messages from peers and groups</string>
     <string name="notif_pairing_channel">Pairing</string>
 
-    <!-- UI strings -->
+    <!-- Tabs -->
+    <string name="tab_chats">Chats</string>
     <string name="tab_peers">Peers</string>
     <string name="tab_groups">Groups</string>
-    <string name="tab_settings">Settings</string>
-    <string name="action_pair">Pair</string>
-    <string name="action_search">Search</string>
-    <string name="action_new_group">New group</string>
-    <string name="action_export_identity">Export identity</string>
-    <string name="action_clear_history">Clear chat history</string>
-    <string name="action_battery_whitelist">Disable battery optimization</string>
 
-    <string name="placeholder_message">message…</string>
+    <!-- Common -->
+    <string name="action_back">Back</string>
+    <string name="action_save">Save</string>
+    <string name="action_send">Send</string>
+    <string name="action_attach">Attach</string>
+    <string name="action_search">Search</string>
+    <string name="action_close">Close</string>
+    <string name="action_continue">Continue</string>
+    <string name="action_pair">Pair</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_new_group">New group</string>
+    <string name="action_create_group">Create group</string>
+    <string name="action_pair_peer">Pair a peer</string>
+    <string name="action_trust_peer">Trust peer</string>
+    <string name="action_scan_qr">Scan QR</string>
+    <string name="action_grant">Grant permissions</string>
+    <string name="action_grant_camera">Grant camera access</string>
+    <string name="action_apply_rekey">Apply changes (rekey)</string>
+    <string name="action_clear_history">Clear chat history</string>
+    <string name="action_show_recovery">Show recovery phrase</string>
+    <string name="action_whitelist">Whitelist</string>
+
+    <!-- Placeholders -->
+    <string name="placeholder_message">Message…</string>
     <string name="placeholder_search_messages">Search messages…</string>
     <string name="placeholder_pairing">meshlink:1:…</string>
+    <string name="placeholder_your_name">Your name</string>
+    <string name="placeholder_group_name">Awesome group</string>
 
+    <!-- Empty / status -->
     <string name="empty_peers">Looking for nearby MeshLink nodes…</string>
     <string name="empty_groups">No groups yet</string>
+    <string name="empty_chats">No chats yet</string>
+    <string name="empty_chats_hint">Pair a peer or invite contacts into a group to start chatting offline.</string>
     <string name="empty_messages">No messages yet — say hi.</string>
+    <string name="empty_no_matches">No matches</string>
+    <string name="status_saved">Saved</string>
+    <string name="status_history_cleared">Chat history cleared</string>
+    <string name="status_invalid_pairing">Invalid pairing code</string>
+    <string name="status_qr_not_meshlink">Not a MeshLink pairing QR.</string>
+    <string name="status_service_not_bound">Service not bound yet — try again.</string>
+    <string name="status_rekey_done">Group key rotated</string>
+    <string name="status_trusted">Trusted %1$s (%2$s)</string>
 
+    <!-- Onboarding -->
     <string name="onboarding_title">Welcome to MeshLink</string>
-    <string name="onboarding_body">A fully offline messenger that routes through every Bluetooth LE, Wi-Fi LAN and Wi-Fi Direct radio nearby. We need a few permissions and battery whitelisting so the mesh keeps working when your screen is locked.</string>
-    <string name="onboarding_grant">Grant permissions</string>
-    <string name="onboarding_continue">Continue</string>
+    <string name="onboarding_body">An offline-first messenger that routes through every Bluetooth LE, Wi-Fi LAN and Wi-Fi Direct radio nearby — no servers, no cell data.</string>
+    <string name="onboarding_ble_title">Bluetooth LE + Wi-Fi peers</string>
+    <string name="onboarding_ble_body">We need scan/advertise/connect permissions so your phone can find and talk to nearby MeshLink devices. We\'ll ask once you tap Continue.</string>
+    <string name="onboarding_wifi_title">Nearby Wi-Fi (Android 13+)</string>
+    <string name="onboarding_wifi_body">Opens up Wi-Fi Direct fat-pipe transfers without exposing physical location.</string>
+    <string name="onboarding_e2e_title">End-to-end encryption</string>
+    <string name="onboarding_e2e_body">Every chat is signed and encrypted on-device. Your private key never leaves the device — back it up from Settings.</string>
+    <string name="onboarding_battery_title">Always-on mesh</string>
+    <string name="onboarding_battery_body">Whitelist MeshLink from battery optimization so the mesh keeps relaying messages while your screen is locked.</string>
 
+    <!-- Pairing -->
+    <string name="pairing_title">Pairing</string>
+    <string name="pairing_your_code">Your pairing code</string>
+    <string name="pairing_share_hint">Show this QR or share the code out-of-band so the other device can trust your identity without ever joining the mesh.</string>
+    <string name="pairing_trust_a_peer">Trust a peer</string>
+    <string name="pairing_or_paste">or paste the code below</string>
+    <string name="pairing_qr_too_large">(QR payload too large; share the text below)</string>
+    <string name="pairing_camera_perm_title">Camera permission needed</string>
+    <string name="pairing_camera_perm_body">Grant camera access to scan another device\'s pairing QR. You can also go back and paste the code manually.</string>
+    <string name="pairing_scan_qr">Scan QR</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
     <string name="settings_display_name">Display name</string>
-    <string name="settings_node_id">Your node id</string>
+    <string name="settings_node_id">Your node id: %1$s</string>
+    <string name="settings_dynamic_color">Material You colours</string>
+    <string name="settings_dynamic_color_body">Match the system wallpaper palette on Android 12+.</string>
     <string name="settings_topology">Mesh topology</string>
-    <string name="settings_save">Save</string>
+    <string name="settings_topology_unbound">Service not yet bound.</string>
+    <string name="settings_topology_summary">%1$d direct, %2$d nodes known, %3$d mesh edges.</string>
+    <string name="settings_identity_backup">Identity backup</string>
+    <string name="settings_identity_backup_body">Export a recovery phrase. Anyone with these words can impersonate you, so keep them somewhere private.</string>
+    <string name="settings_storage">Storage</string>
 
+    <!-- New group -->
+    <string name="new_group_title">New group</string>
+    <string name="new_group_name">Group name</string>
+    <string name="new_group_add_members">Add members</string>
+
+    <!-- Group info -->
+    <string name="group_info_members">Members (%1$d)</string>
+    <string name="group_info_rekey_hint">Removing a member rotates the group key so they can no longer decrypt new messages.</string>
+    <string name="group_info_member">member</string>
+    <string name="group_info_will_add">will be added</string>
+    <string name="group_info_will_remove">will be removed</string>
+    <string name="group_info_in">in</string>
+    <string name="group_info_not_found">Group not found.</string>
+
+    <!-- Chat -->
+    <string name="chat_you_prefix">You: </string>
+    <string name="chat_now">now</string>
+    <string name="chat_minutes">%1$dm</string>
+    <string name="chat_hours">%1$dh</string>
+    <string name="chat_days">%1$dd</string>
+    <string name="chat_unread_overflow">99+</string>
+
+    <!-- Live-link badges -->
     <string name="link_direct">direct</string>
     <string name="link_relay">via relay</string>
     <string name="link_unknown">no route</string>
+
+    <!-- Identity-conflict notification body -->
+    <string name="trust_warning_title">Identity changed for %1$s</string>
+    <string name="trust_warning_text">This peer\'s signing key changed. They may have reset their device — or someone is impersonating them. Re-pair to restore trust.</string>
+
+    <!-- QR scanner -->
+    <string name="qr_scan_title">Scan QR</string>
 </resources>

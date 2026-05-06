@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.layout.width
@@ -50,6 +51,7 @@ import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
+import team.hex.meshlink.R
 import team.hex.meshlink.pairing.PairingPayload
 import team.hex.meshlink.ui.theme.GlassSurface
 import java.util.concurrent.Executors
@@ -80,6 +82,7 @@ fun QrScannerScreen(
         if (!cameraGranted) launcher.launch(Manifest.permission.CAMERA)
     }
     var error by remember { mutableStateOf<String?>(null) }
+    val errNotMeshlink = stringResource(R.string.status_qr_not_meshlink)
 
     Column(
         modifier = Modifier
@@ -93,10 +96,11 @@ fun QrScannerScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "back")
+                Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
             }
             Spacer(Modifier.width(4.dp))
-            Text("Scan QR", style = MaterialTheme.typography.headlineMedium,
+            Text(stringResource(R.string.qr_scan_title),
+                style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.weight(1f))
         }
         if (cameraGranted) {
@@ -104,7 +108,7 @@ fun QrScannerScreen(
                 onPayload = { payload ->
                     val parsed = PairingPayload.decodeOrNull(payload)
                     if (parsed != null) onScanned(parsed)
-                    else error = "Not a MeshLink pairing QR."
+                    else error = errNotMeshlink
                 },
             )
         } else {
@@ -114,18 +118,17 @@ fun QrScannerScreen(
                     shape = RoundedCornerShape(24.dp),
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
-                        Text("Camera permission needed",
+                        Text(stringResource(R.string.pairing_camera_perm_title),
                             style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Grant camera access to scan another device's pairing QR. " +
-                                "You can also go back and paste the code manually.",
+                            stringResource(R.string.pairing_camera_perm_body),
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Spacer(Modifier.height(12.dp))
                         Button(onClick = {
                             launcher.launch(Manifest.permission.CAMERA)
-                        }) { Text("Grant camera access") }
+                        }) { Text(stringResource(R.string.action_grant_camera)) }
                     }
                 }
             }

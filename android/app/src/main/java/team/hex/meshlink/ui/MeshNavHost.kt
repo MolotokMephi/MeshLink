@@ -55,9 +55,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import team.hex.meshlink.MeshLinkApp
+import team.hex.meshlink.R
 import team.hex.meshlink.pairing.PairingPayload
 import team.hex.meshlink.service.MeshService
 import team.hex.meshlink.service.Notifications
@@ -69,6 +71,7 @@ import team.hex.meshlink.storage.PeerRow
 import team.hex.meshlink.ui.theme.AuroraBackground
 import team.hex.meshlink.ui.theme.GlassChip
 import team.hex.meshlink.ui.theme.GlassSurface
+import team.hex.meshlink.ui.theme.GradientText
 import team.hex.meshlink.ui.theme.LivePulse
 
 private sealed class Screen {
@@ -166,19 +169,24 @@ private fun HomeScreen(
     ) {
         GlassHeader(
             title = "MeshLink",
+            useGradientTitle = true,
             actions = {
                 IconButton(onClick = onPair) {
-                    Icon(Icons.Filled.QrCode, contentDescription = "pair")
+                    Icon(Icons.Filled.QrCode, contentDescription = stringResource(R.string.action_pair))
                 }
                 IconButton(onClick = onSettings) {
-                    Icon(Icons.Filled.Settings, contentDescription = "settings")
+                    Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.action_settings))
                 }
             },
         )
         Spacer(Modifier.height(8.dp))
         GlassPillTabs(
             selected = tab,
-            tabs = listOf("Chats", "Peers", "Groups"),
+            tabs = listOf(
+                stringResource(R.string.tab_chats),
+                stringResource(R.string.tab_peers),
+                stringResource(R.string.tab_groups),
+            ),
             onSelect = { tab = it },
             modifier = Modifier.padding(horizontal = 16.dp),
         )
@@ -221,17 +229,18 @@ private fun ChatList(
                         modifier = Modifier.padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text("No chats yet", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.empty_chats),
+                            style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "Pair a peer or invite contacts into a group to start chatting offline.",
+                            stringResource(R.string.empty_chats_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                         )
                         Spacer(Modifier.height(16.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = onPair) { Text("Pair a peer") }
-                            Button(onClick = onNewGroup) { Text("New group") }
+                            Button(onClick = onPair) { Text(stringResource(R.string.action_pair_peer)) }
+                            Button(onClick = onNewGroup) { Text(stringResource(R.string.action_new_group)) }
                         }
                     }
                 }
@@ -294,7 +303,7 @@ private fun ConversationCard(
                     )
                 }
                 Spacer(Modifier.height(2.dp))
-                val preview = (if (conv.lastOutgoing) "You: " else "") + conv.lastBody
+                val preview = (if (conv.lastOutgoing) stringResource(R.string.chat_you_prefix) else "") + conv.lastBody
                 Text(
                     preview,
                     style = MaterialTheme.typography.bodyMedium,
@@ -323,21 +332,22 @@ private fun UnreadBadge(count: Int) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            if (count > 99) "99+" else count.toString(),
+            if (count > 99) stringResource(R.string.chat_unread_overflow) else count.toString(),
             color = MaterialTheme.colorScheme.onPrimary,
             style = MaterialTheme.typography.labelSmall,
         )
     }
 }
 
+@Composable
 private fun relativeTime(ts: Long): String {
     val now = System.currentTimeMillis()
     val diff = now - ts
     return when {
-        diff < 60_000L -> "now"
-        diff < 60 * 60_000L -> "${diff / 60_000L}m"
-        diff < 24 * 60 * 60_000L -> "${diff / (60 * 60_000L)}h"
-        diff < 7 * 24 * 60 * 60_000L -> "${diff / (24 * 60 * 60_000L)}d"
+        diff < 60_000L -> stringResource(R.string.chat_now)
+        diff < 60 * 60_000L -> stringResource(R.string.chat_minutes, (diff / 60_000L).toInt())
+        diff < 24 * 60 * 60_000L -> stringResource(R.string.chat_hours, (diff / (60 * 60_000L)).toInt())
+        diff < 7 * 24 * 60 * 60_000L -> stringResource(R.string.chat_days, (diff / (24 * 60 * 60_000L)).toInt())
         else -> {
             val cal = java.util.Calendar.getInstance().apply { timeInMillis = ts }
             "%02d.%02d".format(
@@ -353,6 +363,7 @@ private fun GlassHeader(
     title: String,
     leading: @Composable (() -> Unit)? = null,
     actions: @Composable () -> Unit = {},
+    useGradientTitle: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -364,11 +375,19 @@ private fun GlassHeader(
             leading()
             Spacer(Modifier.width(4.dp))
         }
-        Text(
-            title,
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.weight(1f),
-        )
+        if (useGradientTitle) {
+            GradientText(
+                text = title,
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.weight(1f),
+            )
+        }
         Row { actions() }
     }
 }
@@ -428,7 +447,7 @@ private fun PeerList(
                 shape = RoundedCornerShape(28.dp),
             ) {
                 Text(
-                    "Looking for nearby MeshLink nodes…",
+                    stringResource(R.string.empty_peers),
                     modifier = Modifier.padding(20.dp),
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -502,9 +521,9 @@ private enum class LinkState { Direct, Relay, Unknown }
 @Composable
 private fun LinkBadge(state: LinkState) {
     val (label, color) = when (state) {
-        LinkState.Direct -> "direct" to MaterialTheme.colorScheme.secondary
-        LinkState.Relay -> "via relay" to MaterialTheme.colorScheme.tertiary
-        LinkState.Unknown -> "no route" to MaterialTheme.colorScheme.outline
+        LinkState.Direct -> stringResource(R.string.link_direct) to MaterialTheme.colorScheme.secondary
+        LinkState.Relay -> stringResource(R.string.link_relay) to MaterialTheme.colorScheme.tertiary
+        LinkState.Unknown -> stringResource(R.string.link_unknown) to MaterialTheme.colorScheme.outline
     }
     GlassChip(color = color.copy(alpha = 0.22f)) {
         Row(
@@ -555,9 +574,10 @@ private fun GroupList(
                     shape = RoundedCornerShape(28.dp),
                 ) {
                     Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("No groups yet", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.empty_groups),
+                            style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(12.dp))
-                        Button(onClick = onNewGroup) { Text("New group") }
+                        Button(onClick = onNewGroup) { Text(stringResource(R.string.action_new_group)) }
                     }
                 }
             }
@@ -602,7 +622,7 @@ private fun GroupList(
                 .clip(RoundedCornerShape(999.dp))
                 .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp)),
         ) {
-            Icon(Icons.Filled.GroupAdd, contentDescription = "new group",
+            Icon(Icons.Filled.GroupAdd, contentDescription = stringResource(R.string.action_new_group),
                 tint = MaterialTheme.colorScheme.onPrimary)
         }
     }
@@ -634,11 +654,11 @@ private fun PairingScreen(
                 if (svc != null) {
                     scope.launch {
                         svc.acceptPairing(payload)
-                        status = "Trusted ${payload.name} (${payload.nodeId})"
+                        status = ctx.getString(R.string.status_trusted, payload.name, payload.nodeId)
                         scanning = false
                     }
                 } else {
-                    status = "Service not bound yet — try again."
+                    status = ctx.getString(R.string.status_service_not_bound)
                     scanning = false
                 }
             },
@@ -652,10 +672,10 @@ private fun PairingScreen(
             .padding(WindowInsets.systemBars.asPaddingValues()),
     ) {
         GlassHeader(
-            title = "Pairing",
+            title = stringResource(R.string.pairing_title),
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "back")
+                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
         )
@@ -670,7 +690,8 @@ private fun PairingScreen(
                 shape = RoundedCornerShape(24.dp),
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Your pairing code", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.pairing_your_code),
+                        style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
                     QrPreview(text = ourString)
                     Spacer(Modifier.height(12.dp))
@@ -683,8 +704,7 @@ private fun PairingScreen(
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Show this QR or share the code out-of-band so the other " +
-                            "device can trust your identity without ever joining the mesh.",
+                        stringResource(R.string.pairing_share_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                     )
@@ -695,36 +715,39 @@ private fun PairingScreen(
                 shape = RoundedCornerShape(24.dp),
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Trust a peer", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.pairing_trust_a_peer),
+                        style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = { scanning = true },
                             modifier = Modifier.weight(1f),
-                        ) { Text("Scan QR") }
+                        ) { Text(stringResource(R.string.pairing_scan_qr)) }
                     }
                     Spacer(Modifier.height(12.dp))
-                    Text("or paste the code below",
+                    Text(stringResource(R.string.pairing_or_paste),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
                     Spacer(Modifier.height(8.dp))
                     GlassTextField(
                         value = input,
                         onValueChange = { input = it },
-                        placeholder = "meshlink:1:…",
+                        placeholder = stringResource(R.string.placeholder_pairing),
                     )
                     Spacer(Modifier.height(12.dp))
+                    val invalid = stringResource(R.string.status_invalid_pairing)
+                    val trustedFmt = stringResource(R.string.status_trusted)
                     Button(
                         onClick = {
                             val payload = PairingPayload.decodeOrNull(input.trim())
-                            if (payload == null) { status = "Invalid pairing code"; return@Button }
+                            if (payload == null) { status = invalid; return@Button }
                             val svc = getService() ?: return@Button
                             scope.launch {
                                 svc.acceptPairing(payload)
-                                status = "Trusted ${payload.name} (${payload.nodeId})"
+                                status = trustedFmt.format(payload.name, payload.nodeId)
                             }
                         },
-                    ) { Text("Trust peer") }
+                    ) { Text(stringResource(R.string.action_trust_peer)) }
                     status?.let {
                         Spacer(Modifier.height(8.dp))
                         Text(it, style = MaterialTheme.typography.bodySmall)
@@ -741,7 +764,7 @@ private fun QrPreview(text: String) {
         runCatching { team.hex.meshlink.pairing.QrEncoder.encode(text) }.getOrNull()
     }
     if (matrix == null) {
-        Text("(QR payload too large; share the text below)",
+        Text(stringResource(R.string.pairing_qr_too_large),
             style = MaterialTheme.typography.bodySmall)
         return
     }
@@ -795,10 +818,10 @@ private fun SettingsScreen(
             .padding(WindowInsets.systemBars.asPaddingValues()),
     ) {
         GlassHeader(
-            title = "Settings",
+            title = stringResource(R.string.settings_title),
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "back")
+                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
         )
@@ -810,15 +833,16 @@ private fun SettingsScreen(
         ) {
             GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Display name", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.settings_display_name),
+                        style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     GlassTextField(
                         value = name,
                         onValueChange = { name = it },
-                        placeholder = "Your name",
+                        placeholder = stringResource(R.string.placeholder_your_name),
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text("Your node id: ${app.identity.nodeId()}",
+                    Text(stringResource(R.string.settings_node_id, app.identity.nodeId()),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
                 }
@@ -826,7 +850,7 @@ private fun SettingsScreen(
             GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Material You colours",
+                        Text(stringResource(R.string.settings_dynamic_color),
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.titleMedium)
                         Switch(
@@ -837,32 +861,35 @@ private fun SettingsScreen(
                             },
                         )
                     }
-                    Text("Match the system wallpaper palette on Android 12+.",
+                    Text(stringResource(R.string.settings_dynamic_color_body),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
                 }
             }
             GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Mesh topology", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.settings_topology),
+                        style = MaterialTheme.typography.titleMedium)
                     val snap = getService()?.router()?.graph?.snapshot()
                     Spacer(Modifier.height(8.dp))
                     if (snap == null) {
-                        Text("Service not yet bound.", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.settings_topology_unbound),
+                            style = MaterialTheme.typography.bodySmall)
                     } else {
-                        Text("${snap.directNeighbours} direct, ${snap.nodes} nodes known, " +
-                            "${snap.edges} mesh edges.",
+                        Text(
+                            stringResource(R.string.settings_topology_summary,
+                                snap.directNeighbours, snap.nodes, snap.edges),
                             style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
             GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Identity backup", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.settings_identity_backup),
+                        style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Export a 24-word recovery phrase. Anyone with these words " +
-                            "can impersonate you, so keep them somewhere private.",
+                        stringResource(R.string.settings_identity_backup_body),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                     )
@@ -870,7 +897,7 @@ private fun SettingsScreen(
                     var phrase by remember { mutableStateOf<String?>(null) }
                     Button(onClick = {
                         phrase = team.hex.meshlink.crypto.MnemonicBackup.exportPhrase(app.identity)
-                    }) { Text("Show recovery phrase") }
+                    }) { Text(stringResource(R.string.action_show_recovery)) }
                     val current = phrase
                     if (current != null) {
                         Spacer(Modifier.height(12.dp))
@@ -882,23 +909,26 @@ private fun SettingsScreen(
             }
             GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Storage", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.settings_storage),
+                        style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
+                    val clearedMsg = stringResource(R.string.status_history_cleared)
                     Button(onClick = {
                         scope.launch {
                             db.chatDao().deleteOlderThan(System.currentTimeMillis())
-                            status = "Chat history cleared"
+                            status = clearedMsg
                         }
-                    }) { Text("Clear chat history") }
+                    }) { Text(stringResource(R.string.action_clear_history)) }
                 }
             }
+            val savedMsg = stringResource(R.string.status_saved)
             Button(
                 onClick = {
                     app.identityStore.setDisplayName(name.ifBlank { "Anon" })
-                    status = "Saved"
+                    status = savedMsg
                 },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Save") }
+            ) { Text(stringResource(R.string.action_save)) }
             status?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
@@ -927,10 +957,10 @@ private fun NewGroupScreen(
             .padding(WindowInsets.systemBars.asPaddingValues()),
     ) {
         GlassHeader(
-            title = "New group",
+            title = stringResource(R.string.new_group_title),
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "back")
+                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
         )
@@ -942,12 +972,15 @@ private fun NewGroupScreen(
         ) {
             GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Group name", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.new_group_name),
+                        style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
-                    GlassTextField(value = name, onValueChange = { name = it }, placeholder = "Awesome group")
+                    GlassTextField(value = name, onValueChange = { name = it },
+                        placeholder = stringResource(R.string.placeholder_group_name))
                 }
             }
-            Text("Add members", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.new_group_add_members),
+                style = MaterialTheme.typography.titleMedium)
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -977,7 +1010,7 @@ private fun NewGroupScreen(
                             }
                             if (isOn) {
                                 Icon(
-                                    Icons.Filled.Send, contentDescription = "selected",
+                                    Icons.Filled.Send, contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
@@ -995,7 +1028,7 @@ private fun NewGroupScreen(
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Create group") }
+            ) { Text(stringResource(R.string.action_create_group)) }
         }
     }
 }
@@ -1048,16 +1081,16 @@ private fun ChatScreen(
             title = title,
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "back")
+                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
             actions = {
                 IconButton(onClick = { query = if (query == null) "" else null }) {
-                    Icon(Icons.Filled.Search, contentDescription = "search")
+                    Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.action_search))
                 }
                 if (kind == MeshService.SCOPE_GROUP) {
                     IconButton(onClick = onOpenInfo) {
-                        Icon(Icons.Filled.GroupAdd, contentDescription = "group settings")
+                        Icon(Icons.Filled.GroupAdd, contentDescription = stringResource(R.string.action_settings))
                     }
                 }
             },
@@ -1066,11 +1099,11 @@ private fun ChatScreen(
             GlassTextField(
                 value = query!!,
                 onValueChange = { query = it },
-                placeholder = "Search messages…",
+                placeholder = stringResource(R.string.placeholder_search_messages),
                 modifier = Modifier.padding(horizontal = 16.dp),
                 trailing = {
                     IconButton(onClick = { query = null }) {
-                        Icon(Icons.Filled.Close, contentDescription = "close search")
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close))
                     }
                 },
             )
@@ -1080,7 +1113,8 @@ private fun ChatScreen(
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 GlassSurface(shape = RoundedCornerShape(24.dp)) {
                     Text(
-                        if (query != null) "No matches" else "No messages yet — say hi.",
+                        if (query != null) stringResource(R.string.empty_no_matches)
+                        else stringResource(R.string.empty_messages),
                         modifier = Modifier.padding(20.dp),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -1136,13 +1170,13 @@ private fun ChatComposer(
     ) {
         if (onAttach != null) {
             IconButton(onClick = onAttach) {
-                Icon(Icons.Filled.AttachFile, contentDescription = "attach")
+                Icon(Icons.Filled.AttachFile, contentDescription = stringResource(R.string.action_attach))
             }
         }
         GlassTextField(
             value = value,
             onValueChange = onValueChange,
-            placeholder = "Message…",
+            placeholder = stringResource(R.string.placeholder_message),
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(8.dp))
@@ -1153,7 +1187,7 @@ private fun ChatComposer(
                 .clip(RoundedCornerShape(999.dp))
                 .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp)),
         ) {
-            Icon(Icons.Filled.Send, contentDescription = "send",
+            Icon(Icons.Filled.Send, contentDescription = stringResource(R.string.action_send),
                 tint = MaterialTheme.colorScheme.onPrimary)
         }
     }
@@ -1255,6 +1289,7 @@ private fun GroupInfoScreen(
     val toRemove = remember { mutableStateOf(setOf<String>()) }
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<String?>(null) }
+    val rekeyDoneMsg = stringResource(R.string.status_rekey_done)
 
     Column(
         modifier = Modifier
@@ -1262,16 +1297,16 @@ private fun GroupInfoScreen(
             .padding(WindowInsets.systemBars.asPaddingValues()),
     ) {
         GlassHeader(
-            title = group?.name ?: "Group",
+            title = group?.name ?: stringResource(R.string.tab_groups),
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "back")
+                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
         )
         if (group == null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Group not found.")
+                Text(stringResource(R.string.group_info_not_found))
             }
             return@Column
         }
@@ -1283,12 +1318,11 @@ private fun GroupInfoScreen(
         ) {
             GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Members (${members.size})",
+                    Text(stringResource(R.string.group_info_members, members.size),
                         style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Removing a member rotates the group key so they can no " +
-                            "longer decrypt new messages.",
+                        stringResource(R.string.group_info_rekey_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                     )
@@ -1327,9 +1361,9 @@ private fun GroupInfoScreen(
                                 Text(p.name, style = MaterialTheme.typography.titleMedium)
                                 Text(
                                     when {
-                                        markedRemove -> "will be removed"
-                                        markedAdd -> "will be added"
-                                        isMember -> "member"
+                                        markedRemove -> stringResource(R.string.group_info_will_remove)
+                                        markedAdd -> stringResource(R.string.group_info_will_add)
+                                        isMember -> stringResource(R.string.group_info_member)
                                         else -> p.nodeId
                                     },
                                     style = MaterialTheme.typography.bodySmall,
@@ -1341,7 +1375,7 @@ private fun GroupInfoScreen(
                                     color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f),
                                 ) {
                                     Text(
-                                        "in",
+                                        stringResource(R.string.group_info_in),
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                         style = MaterialTheme.typography.labelSmall,
                                     )
@@ -1363,12 +1397,12 @@ private fun GroupInfoScreen(
                         }
                         toAdd.value = emptySet()
                         toRemove.value = emptySet()
-                        status = "Group key rotated"
+                        status = rekeyDoneMsg
                     }
                 },
                 enabled = toAdd.value.isNotEmpty() || toRemove.value.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Apply changes (rekey)") }
+            ) { Text(stringResource(R.string.action_apply_rekey)) }
             status?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
