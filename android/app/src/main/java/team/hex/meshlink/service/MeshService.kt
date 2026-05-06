@@ -123,10 +123,15 @@ class MeshService : Service() {
             launch { collectAppInbox() }
             launch { collectPeers() }
             launch { collectIdentityConflicts() }
+            // Transports must start AFTER the incoming collectors are wired
+            // up — `incoming` is a SharedFlow with no replay, so frames
+            // emitted before subscription land in the void. On startup that
+            // tended to lose the very first ANNOUNCE from peers already in
+            // range, leaving the local mesh "blind" until the next 15s tick.
+            for (t in transports) runCatching { t.start() }
             launch { announceLoop() }
         }
 
-        for (t in transports) t.start()
         outbox.start()
     }
 

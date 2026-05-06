@@ -1,5 +1,6 @@
 package team.hex.meshlink.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -46,7 +47,6 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import android.content.pm.PackageManager
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -112,6 +112,13 @@ fun MeshNavHost(
             Screen.Chat(openScopeId, openScopeKind, openScopeKind.replaceFirstChar { it.uppercase() })
         } else Screen.Home
         mutableStateOf(initial)
+    }
+
+    // System back gesture / button: pop to Home instead of exiting the
+    // activity. Crucial on Samsung One UI where the gesture-bar back
+    // swipe is the primary navigation affordance.
+    BackHandler(enabled = screen !is Screen.Home) {
+        screen = Screen.Home
     }
 
     AuroraBackground(modifier = modifier.fillMaxSize()) {

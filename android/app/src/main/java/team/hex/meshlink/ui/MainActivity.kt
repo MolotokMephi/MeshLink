@@ -16,7 +16,9 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.collectAsState
@@ -68,6 +70,14 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Edge-to-edge with auto status/nav bar contrast. Samsung's One UI
+        // 6+ refuses to render translucent system bars unless the activity
+        // opts in here — without it the app draws *behind* an opaque grey
+        // strip the OS overlays on top of our aurora gradient.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(0, 0),
+            navigationBarStyle = SystemBarStyle.auto(0, 0),
+        )
         super.onCreate(savedInstanceState)
         readDeepLinkExtras(intent)
         consumeNfcIntent(intent)

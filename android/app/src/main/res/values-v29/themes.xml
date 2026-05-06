@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Splash/launcher theme. The actual UI is rendered by Compose under
-         MeshLinkTheme, so we just need a transparent, action-bar-less host
-         that follows the system day/night setting (so Samsung's One UI
-         dark theme doesn't flash a white background on cold start). -->
+    <!-- API 29+ adds enforce*BarContrast (Q+) and layoutInDisplayCutoutMode
+         shortEdges so the Compose UI can paint behind the camera notch on
+         current Samsung / Pixel hardware without the system overlaying a
+         contrasting strip on top. -->
     <style name="Theme.MeshLink" parent="@android:style/Theme.DeviceDefault.DayNight.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
@@ -11,5 +11,8 @@
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:windowTranslucentStatus">false</item>
         <item name="android:windowTranslucentNavigation">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 </resources>
