@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
+  issues: write
 
 jobs:
   build:
@@ -60,8 +62,11 @@ jobs:
           ./gradlew --version
           ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log
 
-      - name: Surface failure to step summary
+      - name: Surface failure to step summary + PR comment
         if: failure() && steps.assemble.conclusion == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           {
             echo "# Build failure"
@@ -70,15 +75,19 @@ jobs:
             echo '```'
             tail -200 /tmp/gradle.log 2>/dev/null || echo "no gradle log"
             echo '```'
-            echo
-            echo "## Compile / lint reports"
-            for f in $(find android/app/build/reports -type f \( -name "*.txt" -o -name "*.html" \) 2>/dev/null | head -10); do
-              echo "### $f"
-              echo '```'
-              head -200 "$f"
-              echo '```'
-            done
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > /tmp/summary.md
+          cat /tmp/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+          # Post the failure summary as a PR comment so we can read it
+          # without admin auth on the action logs.
+          if [ -n "${PR_NUMBER:-}" ]; then
+            jq -n --arg body "$(cat /tmp/summary.md)" '{body: $body}' > /tmp/comment.json
+            curl -sS -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -d @/tmp/comment.json \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+              -o /tmp/comment_response.json -w "HTTP %{http_code}\n" || true
+          fi
 
       - name: Run unit tests
         working-directory: android
