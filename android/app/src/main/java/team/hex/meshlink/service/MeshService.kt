@@ -233,7 +233,25 @@ class MeshService : Service() {
             name = t.name,
             state = t.state.value,
             liveLinks = t.liveLinkCount,
+            details = t.details,
         )
+    }
+
+    /**
+     * Re-run start() on every transport that's currently Failed or
+     * Stopped. Called from the UI after the user grants additional
+     * permissions or toggles Bluetooth on — without this, the perm
+     * change was invisible until the foreground service died and
+     * respawned.
+     */
+    fun restartTransports() {
+        for (t in transports) {
+            val s = t.state.value
+            if (s == team.hex.meshlink.transport.TransportState.Failed ||
+                s == team.hex.meshlink.transport.TransportState.Stopped) {
+                runCatching { t.start() }
+            }
+        }
     }
 
     fun directNeighbourCount(): Int = router.graph.snapshot().directNeighbours
@@ -531,6 +549,7 @@ class MeshService : Service() {
         val name: String,
         val state: team.hex.meshlink.transport.TransportState,
         val liveLinks: Int,
+        val details: String? = null,
     )
 
     companion object {

@@ -69,6 +69,15 @@
     <string name="transport_state_starting">запуск…</string>
     <string name="transport_state_failed">недоступно</string>
     <string name="transport_state_stopped">отключено</string>
+    <string name="transport_reason_bluetooth_off">Включите Bluetooth в настройках системы.</string>
+    <string name="transport_reason_permissions">Разрешения Bluetooth не выданы — нажмите «Выдать разрешения» выше.</string>
+    <string name="transport_reason_no_adapter">На устройстве нет Bluetooth LE.</string>
+    <string name="transport_reason_advertise_unsupported">Чип Bluetooth этого телефона не поддерживает анонсы (advertising) — вы будете видеть других, но они вас должны найти иным способом (например, по QR).</string>
+    <string name="transport_reason_advertise_too_large">Системе не понравился payload анонса. Попробуйте перезагрузить Bluetooth.</string>
+    <string name="transport_reason_advertise_busy">На устройстве уже работает слишком много BLE-анонсов. Закройте другие приложения, использующие Bluetooth.</string>
+    <string name="transport_reason_advertise_internal">Bluetooth-чип сообщил о внутренней ошибке. Выключите Bluetooth и включите снова.</string>
+    <string name="transport_reason_unknown">Транспорт недоступен.</string>
+    <string name="action_turn_on_bluetooth">Включить Bluetooth</string>
 
     <!-- Placeholders -->
     <string name="placeholder_message">Сообщение…</string>

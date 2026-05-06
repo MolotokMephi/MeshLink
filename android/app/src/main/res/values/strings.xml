@@ -70,6 +70,15 @@
     <string name="transport_state_starting">starting</string>
     <string name="transport_state_failed">unavailable</string>
     <string name="transport_state_stopped">off</string>
+    <string name="transport_reason_bluetooth_off">Turn on Bluetooth in system settings.</string>
+    <string name="transport_reason_permissions">Bluetooth permissions are denied — grant them above.</string>
+    <string name="transport_reason_no_adapter">This device has no Bluetooth LE radio.</string>
+    <string name="transport_reason_advertise_unsupported">This phone\'s Bluetooth chipset doesn\'t allow advertising; you\'ll find others but they need to find you a different way.</string>
+    <string name="transport_reason_advertise_too_large">Advertising payload was rejected — try restarting Bluetooth.</string>
+    <string name="transport_reason_advertise_busy">Too many BLE advertisers running on this device. Close other apps using Bluetooth.</string>
+    <string name="transport_reason_advertise_internal">Bluetooth chip reported an internal error. Toggle Bluetooth off and on.</string>
+    <string name="transport_reason_unknown">Transport unavailable.</string>
+    <string name="action_turn_on_bluetooth">Turn on Bluetooth</string>
 
     <!-- Placeholders -->
     <string name="placeholder_message">Message…</string>

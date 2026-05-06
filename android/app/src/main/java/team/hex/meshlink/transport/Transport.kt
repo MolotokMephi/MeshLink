@@ -43,6 +43,14 @@ interface Transport {
 
     /** Number of currently-live remote peers (for connection-cap accounting). */
     val liveLinkCount: Int
+
+    /**
+     * Human-readable explanation of the current state — primarily used
+     * when [state] is [TransportState.Failed] to tell the user *why*
+     * (e.g. "Bluetooth is off", "permission denied", "no Wi-Fi"). null
+     * means no extra context.
+     */
+    val details: String? get() = null
 }
 
 /**

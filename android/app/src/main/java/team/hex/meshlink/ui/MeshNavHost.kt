@@ -548,6 +548,8 @@ private fun DiscoveryStatusCard(
 
 @Composable
 private fun TransportHealthRow(h: MeshService.TransportHealth) {
+    val ctx = LocalContext.current
+    val activity = ctx as? MainActivity
     val labelRes = when (h.name) {
         "ble" -> R.string.transport_ble
         "lan" -> R.string.transport_lan
@@ -567,22 +569,53 @@ private fun TransportHealthRow(h: MeshService.TransportHealth) {
         team.hex.meshlink.transport.TransportState.Failed -> R.string.transport_state_failed
         team.hex.meshlink.transport.TransportState.Stopped -> R.string.transport_state_stopped
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(color, RoundedCornerShape(999.dp)),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(stringResource(labelRes), style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.width(8.dp))
-        Text(
-            stringResource(stateRes) + " · " + h.liveLinks,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-        )
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(color, RoundedCornerShape(999.dp)),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(labelRes), style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                stringResource(stateRes) + " · " + h.liveLinks,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+            )
+        }
+        // Translate the transport-level diagnostic into actionable copy
+        // + a one-tap fix where possible.
+        val detail = h.details
+        if (detail != null && h.state == team.hex.meshlink.transport.TransportState.Failed) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                stringResource(detailToReason(detail)),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            if (detail == "bluetooth_off") {
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(
+                    onClick = { activity?.requestEnableBluetooth() },
+                    modifier = Modifier.padding(start = 16.dp),
+                ) { Text(stringResource(R.string.action_turn_on_bluetooth)) }
+            }
+        }
     }
+}
+
+private fun detailToReason(detail: String): Int = when (detail) {
+    "bluetooth_off" -> R.string.transport_reason_bluetooth_off
+    "permissions" -> R.string.transport_reason_permissions
+    "no_adapter" -> R.string.transport_reason_no_adapter
+    "advertise_unsupported" -> R.string.transport_reason_advertise_unsupported
+    "advertise_too_large" -> R.string.transport_reason_advertise_too_large
+    "advertise_busy" -> R.string.transport_reason_advertise_busy
+    "advertise_internal" -> R.string.transport_reason_advertise_internal
+    else -> R.string.transport_reason_unknown
 }
 
 @Composable

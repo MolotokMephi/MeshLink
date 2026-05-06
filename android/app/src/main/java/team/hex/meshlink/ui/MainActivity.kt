@@ -157,7 +157,27 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Public hook for the UI: re-prompt for whatever's still missing. */
-    fun requestMeshPermissions() = ensurePermissionsAndStart()
+    fun requestMeshPermissions() {
+        ensurePermissionsAndStart()
+        // Even if the OS perms are already granted, transports may have
+        // started in Failed state earlier (Bluetooth off at the time, etc.).
+        // Kick them to retry now that the user has come back to fix things.
+        meshService?.restartTransports()
+    }
+
+    /**
+     * Pop the system "Turn on Bluetooth" prompt. Some Samsung devices
+     * (M55 in particular) ship with BLE off by default in privacy mode;
+     * the discovery banner uses this to give the user a one-tap fix.
+     */
+    @android.annotation.SuppressLint("MissingPermission")
+    fun requestEnableBluetooth() {
+        runCatching {
+            startActivity(Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE))
+        }.onFailure {
+            runCatching { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
+        }
+    }
 
     private fun ensurePermissionsAndStart() {
         val needed = mutableListOf<String>()

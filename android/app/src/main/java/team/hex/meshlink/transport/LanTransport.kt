@@ -61,6 +61,9 @@ class LanTransport(private val context: Context) : Transport {
     private var tcpJob: Job? = null
     private val tcpLinks = ConcurrentHashMap<String, LanTcpLink>()
 
+    /** Connection attempts in flight, deduped by key, so we don't spam SYNs. */
+    private val tcpAttempts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     private val reassemblers = ConcurrentHashMap<String, team.hex.meshlink.ble.Reassembler>()
 
     private val _incoming = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
@@ -224,20 +227,26 @@ class LanTransport(private val context: Context) : Transport {
      * reliable fat-pipe (e.g. file-transfer prefers TCP when available).
      */
     fun connectTcp(host: String, port: Int = TCP_PORT) {
+        val key = "$host:$port"
+        if (tcpLinks.containsKey(key)) return                  // already linked
+        if (!tcpAttempts.add(key)) return                      // attempt in flight
         scope.launch {
             try {
                 val sock = Socket()
                 sock.connect(InetSocketAddress(host, port), 5_000)
-                val key = "$host:$port"
                 val link = LanTcpLink(
                     socket = sock,
                     onFrame = { _incoming.tryEmit(it) },
-                    onClose = { tcpLinks.remove(key) },
+                    onClose = {
+                        tcpLinks.remove(key)
+                        tcpAttempts.remove(key)
+                    },
                 )
                 tcpLinks[key] = link
                 link.startReader()
             } catch (t: Throwable) {
                 Log.w(tag, "tcp connect $host:$port failed: $t")
+                tcpAttempts.remove(key)
             }
         }
     }
@@ -256,6 +265,14 @@ class LanTransport(private val context: Context) : Transport {
             if (isSelfAddress(pkt.address)) continue
             val data = pkt.data.copyOfRange(pkt.offset, pkt.offset + pkt.length)
             val key = pkt.address.hostAddress ?: "?"
+            // Asymmetric-multicast workaround: as soon as we receive a
+            // datagram from a source we'll open a TCP back-channel to it.
+            // On hotspots / corporate APs that filter multicast in one
+            // direction this guarantees both peers can deliver to each
+            // other once at least one direction works.
+            if (key != "?" && key !in tcpLinks.keys.map { it.substringBefore(":") }) {
+                connectTcp(key)
+            }
             val rasm = reassemblers.getOrPut(key) {
                 seenSenders++
                 team.hex.meshlink.ble.Reassembler()

@@ -100,6 +100,8 @@ class BleTransport(private val context: Context) : Transport {
 
     @Volatile private var advertising = false
     @Volatile private var scanning = false
+    @Volatile private var lastDetails: String? = null
+    override val details: String? get() = lastDetails
     private var keepaliveJob: Job? = null
 
     /**
@@ -111,14 +113,29 @@ class BleTransport(private val context: Context) : Transport {
 
     fun isReady(): Boolean = adapter != null && adapter.isEnabled && hasPermissions()
 
+    /**
+     * Identify *which* readiness check failed so the user gets a useful
+     * fix instead of a generic "BLE unavailable". null when everything
+     * is fine.
+     */
+    private fun readinessProblem(): String? = when {
+        adapter == null -> "no_adapter"
+        !hasPermissions() -> "permissions"
+        !adapter.isEnabled -> "bluetooth_off"
+        else -> null
+    }
+
     override fun start() {
         if (_state.value == TransportState.Running) return
-        if (!isReady()) {
-            Log.w(tag, "BLE not ready (adapter null/off or missing permissions)")
+        val problem = readinessProblem()
+        if (problem != null) {
+            Log.w(tag, "BLE not ready: $problem")
+            lastDetails = problem
             _state.value = TransportState.Failed
             return
         }
         _state.value = TransportState.Starting
+        lastDetails = null
         startGattServer()
         startAdvertising()
         startScanning()
@@ -302,6 +319,18 @@ class BleTransport(private val context: Context) : Transport {
         override fun onStartFailure(errorCode: Int) {
             Log.w(tag, "advertise failed: $errorCode")
             advertising = false
+            // Centrals can still find each other — the Samsung-class
+            // limitation is that this device won't be discoverable but
+            // can still scan + connect outbound. Surface the failure so
+            // the user can pair manually if needed.
+            lastDetails = when (errorCode) {
+                ADVERTISE_FAILED_DATA_TOO_LARGE -> "advertise_too_large"
+                ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "advertise_busy"
+                ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "advertise_unsupported"
+                ADVERTISE_FAILED_INTERNAL_ERROR -> "advertise_internal"
+                ADVERTISE_FAILED_ALREADY_STARTED -> null
+                else -> "advertise_failed_$errorCode"
+            }
         }
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
             advertising = true
