@@ -98,6 +98,39 @@ data class GroupRow(
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
 )
 
+/**
+ * Per-(group, sender) ratchet state for forward-secret group messages.
+ *
+ *   - `chain_key` is the current root from which the next message key is
+ *     derived; it advances on every encrypt/decrypt step.
+ *   - `counter` is the next-expected message counter for this sender
+ *     (writers compare equality; out-of-order messages whose counter is
+ *     already past get rejected; future counters fast-forward the chain).
+ *
+ * Each device persists its own row with `sender_id == self_node_id` plus
+ * one row per other group member. See [team.hex.meshlink.crypto.SenderKeys].
+ */
+@Entity(tableName = "group_sender_state", primaryKeys = ["group_id", "sender_id"])
+data class GroupSenderRow(
+    @ColumnInfo(name = "group_id") val groupId: String,
+    @ColumnInfo(name = "sender_id") val senderId: String,
+    @ColumnInfo(name = "chain_key") val chainKey: ByteArray,
+    @ColumnInfo(name = "counter") val counter: Long,
+)
+
+/**
+ * Per-peer 1:1 chain ratchet. Sending and receiving are separate chains
+ * keyed by the X25519 session key plus the lower-id node's id, so both
+ * sides agree on the seed without an extra handshake.
+ */
+@Entity(tableName = "peer_chain_state", primaryKeys = ["peer_id", "direction"])
+data class PeerChainRow(
+    @ColumnInfo(name = "peer_id") val peerId: String,
+    @ColumnInfo(name = "direction") val direction: String, // "send" | "recv"
+    @ColumnInfo(name = "chain_key") val chainKey: ByteArray,
+    @ColumnInfo(name = "counter") val counter: Long,
+)
+
 /** A file the user has either offered to send or accepted to receive. */
 @Entity(tableName = "files")
 data class FileRow(
@@ -232,6 +265,30 @@ interface GroupDao {
 }
 
 @Dao
+interface GroupSenderDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: GroupSenderRow)
+
+    @Query("SELECT * FROM group_sender_state WHERE group_id = :groupId AND sender_id = :senderId LIMIT 1")
+    suspend fun get(groupId: String, senderId: String): GroupSenderRow?
+
+    @Query("DELETE FROM group_sender_state WHERE group_id = :groupId")
+    suspend fun deleteForGroup(groupId: String)
+}
+
+@Dao
+interface PeerChainDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: PeerChainRow)
+
+    @Query("SELECT * FROM peer_chain_state WHERE peer_id = :peerId AND direction = :direction LIMIT 1")
+    suspend fun get(peerId: String, direction: String): PeerChainRow?
+
+    @Query("DELETE FROM peer_chain_state WHERE peer_id = :peerId")
+    suspend fun deleteForPeer(peerId: String)
+}
+
+@Dao
 interface FileDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(row: FileRow)
@@ -254,8 +311,10 @@ interface FileDao {
         OutboxRow::class,
         GroupRow::class,
         FileRow::class,
+        GroupSenderRow::class,
+        PeerChainRow::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class MeshDb : RoomDatabase() {
@@ -265,6 +324,8 @@ abstract class MeshDb : RoomDatabase() {
     abstract fun outboxDao(): OutboxDao
     abstract fun groupDao(): GroupDao
     abstract fun fileDao(): FileDao
+    abstract fun groupSenderDao(): GroupSenderDao
+    abstract fun peerChainDao(): PeerChainDao
 
     companion object {
         const val SEEN_CAP = 4096
@@ -277,7 +338,7 @@ abstract class MeshDb : RoomDatabase() {
                 MeshDb::class.java,
                 "meshlink.db"
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
                 .also { instance = it }
         }
@@ -291,6 +352,36 @@ abstract class MeshDb : RoomDatabase() {
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE chat_messages ADD COLUMN read INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        /**
+         * v4 introduces per-sender ratchet state for groups
+         * ([GroupSenderRow]) and per-direction chain state for 1:1 chats
+         * ([PeerChainRow]). Both tables are keyed on natural composite
+         * keys; existing chats keep working until the first new message
+         * triggers chain initialization.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE group_sender_state (
+                        group_id TEXT NOT NULL,
+                        sender_id TEXT NOT NULL,
+                        chain_key BLOB NOT NULL,
+                        counter INTEGER NOT NULL,
+                        PRIMARY KEY(group_id, sender_id)
+                    )""".trimIndent()
+                )
+                db.execSQL(
+                    """CREATE TABLE peer_chain_state (
+                        peer_id TEXT NOT NULL,
+                        direction TEXT NOT NULL,
+                        chain_key BLOB NOT NULL,
+                        counter INTEGER NOT NULL,
+                        PRIMARY KEY(peer_id, direction)
+                    )""".trimIndent()
+                )
             }
         }
 

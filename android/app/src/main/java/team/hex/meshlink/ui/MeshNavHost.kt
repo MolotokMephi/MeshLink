@@ -23,22 +23,29 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
+import android.content.pm.PackageManager
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.core.content.ContextCompat
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -61,6 +68,7 @@ import kotlinx.coroutines.launch
 import team.hex.meshlink.MeshLinkApp
 import team.hex.meshlink.R
 import team.hex.meshlink.pairing.PairingPayload
+import team.hex.meshlink.pairing.SoundPairing
 import team.hex.meshlink.service.MeshService
 import team.hex.meshlink.service.Notifications
 import team.hex.meshlink.storage.ChatMessageRow
@@ -510,6 +518,11 @@ private fun PeerCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 )
+                Text(
+                    stringResource(R.string.peer_detail_last_seen, relativeTime(p.lastSeenMs)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
             }
             LinkBadge(link)
         }
@@ -724,6 +737,26 @@ private fun PairingScreen(
                             modifier = Modifier.weight(1f),
                         ) { Text(stringResource(R.string.pairing_scan_qr)) }
                     }
+                    Spacer(Modifier.height(8.dp))
+                    SoundPairingControls(
+                        ourPayload = ourString,
+                        onPairedSilently = { decoded ->
+                            val payload = PairingPayload.decodeOrNull(decoded)
+                            if (payload == null) {
+                                status = ctx.getString(R.string.sound_pairing_failed)
+                            } else {
+                                val svc = getService()
+                                if (svc != null) {
+                                    scope.launch {
+                                        svc.acceptPairing(payload)
+                                        status = ctx.getString(R.string.status_trusted,
+                                            payload.name, payload.nodeId)
+                                    }
+                                }
+                            }
+                        },
+                        onStatus = { status = it },
+                    )
                     Spacer(Modifier.height(12.dp))
                     Text(stringResource(R.string.pairing_or_paste),
                         style = MaterialTheme.typography.bodySmall,
@@ -1151,6 +1184,13 @@ private fun ChatScreen(
                 draft = ""
             },
             onAttach = { pickFile.launch(arrayOf("*/*")) }.takeIf { kind == MeshService.SCOPE_PEER },
+            onVoiceStart = if (kind == MeshService.SCOPE_PEER) {
+                { getService()?.startVoiceNote() }
+            } else null,
+            onVoiceStop = if (kind == MeshService.SCOPE_PEER) {
+                { scope.launch { getService()?.stopAndSendVoiceNote(scopeId) } }
+            } else null,
+            onVoiceCancel = { getService()?.cancelVoiceNote() },
         )
     }
 }
@@ -1161,6 +1201,9 @@ private fun ChatComposer(
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
     onAttach: (() -> Unit)? = null,
+    onVoiceStart: (() -> Unit)? = null,
+    onVoiceStop: (() -> Unit)? = null,
+    onVoiceCancel: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -1180,16 +1223,68 @@ private fun ChatComposer(
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(8.dp))
-        IconButton(
-            onClick = onSend,
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp)),
-        ) {
-            Icon(Icons.Filled.Send, contentDescription = stringResource(R.string.action_send),
-                tint = MaterialTheme.colorScheme.onPrimary)
+        if (value.isBlank() && onVoiceStart != null && onVoiceStop != null) {
+            VoiceHoldButton(
+                onStart = onVoiceStart,
+                onStop = onVoiceStop,
+                onCancel = onVoiceCancel ?: {},
+            )
+        } else {
+            IconButton(
+                onClick = onSend,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp)),
+            ) {
+                Icon(Icons.Filled.Send, contentDescription = stringResource(R.string.action_send),
+                    tint = MaterialTheme.colorScheme.onPrimary)
+            }
         }
+    }
+}
+
+@Composable
+private fun VoiceHoldButton(
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    var pressed by remember { mutableStateOf(false) }
+    val bg = if (pressed) MaterialTheme.colorScheme.error
+        else MaterialTheme.colorScheme.primary
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(bg, RoundedCornerShape(999.dp))
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    pressed = true
+                    onStart()
+                    var cancelled = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        if (change == null || !change.pressed) break
+                        // Slide up >= 80px to cancel — common pattern.
+                        if (change.position.y - down.position.y < -80f) {
+                            cancelled = true
+                            break
+                        }
+                    }
+                    pressed = false
+                    if (cancelled) onCancel() else onStop()
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Filled.Mic,
+            contentDescription = stringResource(R.string.action_voice_record),
+            tint = MaterialTheme.colorScheme.onPrimary,
+        )
     }
 }
 
@@ -1410,3 +1505,76 @@ private fun GroupInfoScreen(
         }
     }
 }
+
+// ------------------------------- Sound pairing -------------------------------
+
+@Composable
+private fun SoundPairingControls(
+    ourPayload: String,
+    onPairedSilently: (String) -> Unit,
+    onStatus: (String) -> Unit,
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+
+    val emittingMsg = stringResource(R.string.sound_pairing_emitting)
+    val listeningMsg = stringResource(R.string.sound_pairing_listening)
+    val failedMsg = stringResource(R.string.sound_pairing_failed)
+
+    val micRequest = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            busy = true
+            onStatus(listeningMsg)
+            scope.launch {
+                val decoded = withContextIO { SoundPairing.listen() }
+                busy = false
+                if (decoded != null) onPairedSilently(decoded)
+                else onStatus(failedMsg)
+            }
+        }
+    }
+
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = {
+                if (busy) return@OutlinedButton
+                busy = true
+                onStatus(emittingMsg)
+                scope.launch {
+                    withContextIO { SoundPairing.emit(ourPayload) }
+                    busy = false
+                    onStatus("")
+                }
+            },
+            enabled = !busy,
+            modifier = Modifier.weight(1f),
+        ) { Text(stringResource(R.string.sound_pairing_emit)) }
+        OutlinedButton(
+            onClick = {
+                if (busy) return@OutlinedButton
+                if (ContextCompat.checkSelfPermission(
+                        ctx, android.Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED) {
+                    busy = true
+                    onStatus(listeningMsg)
+                    scope.launch {
+                        val decoded = withContextIO { SoundPairing.listen() }
+                        busy = false
+                        if (decoded != null) onPairedSilently(decoded)
+                        else onStatus(failedMsg)
+                    }
+                } else {
+                    micRequest.launch(android.Manifest.permission.RECORD_AUDIO)
+                }
+            },
+            enabled = !busy,
+            modifier = Modifier.weight(1f),
+        ) { Text(stringResource(R.string.sound_pairing_listen)) }
+    }
+}
+
+private suspend fun <T> withContextIO(block: () -> T): T =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { block() }

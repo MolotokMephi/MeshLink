@@ -39,6 +39,22 @@
     <string name="action_clear_history">Clear chat history</string>
     <string name="action_show_recovery">Show recovery phrase</string>
     <string name="action_whitelist">Whitelist</string>
+    <string name="action_voice_record">Hold to record</string>
+    <string name="action_grant_microphone">Grant microphone access</string>
+
+    <!-- Sound pairing -->
+    <string name="sound_pairing_title">Sound pairing</string>
+    <string name="sound_pairing_emit">Play your code aloud</string>
+    <string name="sound_pairing_listen">Listen for a peer\'s code</string>
+    <string name="sound_pairing_listening">Listening…</string>
+    <string name="sound_pairing_emitting">Emitting…</string>
+    <string name="sound_pairing_done">Decoded successfully</string>
+    <string name="sound_pairing_failed">Couldn\'t decode the audio. Try again closer to the speaker.</string>
+
+    <!-- Peer detail -->
+    <string name="peer_detail_last_seen">Last seen %1$s</string>
+    <string name="peer_detail_distance">~%1$s</string>
+    <string name="peer_detail_no_distance">distance unknown</string>
 
     <!-- Placeholders -->
     <string name="placeholder_message">Message…</string>

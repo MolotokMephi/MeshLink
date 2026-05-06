@@ -87,4 +87,7 @@ object MsgType {
     const val ANNOUNCE = 80           // identity advertisement (edPub + xPub)
     const val GROUP_TEXT = 90         // group ciphertext (group_id + AES-GCM)
     const val GROUP_INVITE = 91
+    const val GROUP_SENDER_KEY = 92   // 1:1 distribution of a per-sender ratchet seed
+    const val WIFI_HINT = 100         // peer advertises a TCP-reachable Wi-Fi address
+    const val VOICE_NOTE = 110        // file-transfer wrapper for short audio messages
 }

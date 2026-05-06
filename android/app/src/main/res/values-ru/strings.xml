@@ -38,6 +38,22 @@
     <string name="action_clear_history">Очистить историю чатов</string>
     <string name="action_show_recovery">Показать фразу восстановления</string>
     <string name="action_whitelist">Разрешить</string>
+    <string name="action_voice_record">Удерживайте, чтобы записать</string>
+    <string name="action_grant_microphone">Разрешить микрофон</string>
+
+    <!-- Sound pairing -->
+    <string name="sound_pairing_title">Сопряжение через звук</string>
+    <string name="sound_pairing_emit">Воспроизвести код звуком</string>
+    <string name="sound_pairing_listen">Прослушать код собеседника</string>
+    <string name="sound_pairing_listening">Слушаю…</string>
+    <string name="sound_pairing_emitting">Воспроизвожу…</string>
+    <string name="sound_pairing_done">Код успешно распознан</string>
+    <string name="sound_pairing_failed">Не удалось распознать звук. Поднесите устройство ближе к динамику.</string>
+
+    <!-- Peer detail -->
+    <string name="peer_detail_last_seen">Последний раз: %1$s</string>
+    <string name="peer_detail_distance">~%1$s</string>
+    <string name="peer_detail_no_distance">расстояние неизвестно</string>
 
     <!-- Placeholders -->
     <string name="placeholder_message">Сообщение…</string>

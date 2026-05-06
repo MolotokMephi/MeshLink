@@ -84,37 +84,55 @@
       онбординга больше не теряется на тёмном фоне; тинты aurora и
       glass-карт стали ярче для читаемости в dynamic-color schemes.
 
+- ✅ **Sender Keys для групп.** `crypto/SenderKeys` + таблица
+      `group_sender_state` (миграция v3→v4). У каждого члена своя цепочка:
+      `chain_key` ратчетится после каждого encrypt/decrypt, msg_key
+      выводится через HMAC-SHA256(chain_key, "ml-msg" ‖ counter). Старый
+      shared-key путь оставлен как fallback для совместимости.
+- ✅ **1:1 chain ratchet.** `groups/PeerChain` хранит `peer_chain_state`
+      по направлениям (send/recv); seed детерминированно выводится из
+      `HKDF(session_key, "ml-root:" ‖ writer_node_id)`, поэтому обе
+      стороны начинают с одной точки без хендшейка. `MeshService.sendText`
+      и `decryptFromPeer` теперь идут по ratchet-пути с graceful fallback
+      на legacy AES-GCM(session_key) для старых пиров.
+- ✅ **Sound-pairing.** `pairing/SoundPairing` эмитит payload как 4-FSK
+      (1500/2100/2700/3300Hz, 100мс/символ) с CRC-16, декодер через
+      Goertzel-фильтр. UI в pairing screen: «Воспроизвести код звуком» /
+      «Прослушать код собеседника» с runtime запросом RECORD_AUDIO.
+- ✅ **Wi-Fi Direct auto-upgrade.** Новый mesh-тип `WIFI_HINT` несёт
+      `host:lanPort:wdPort`; рассылается каждые ~60с. Получатели вызывают
+      `LanTransport.connectTcp` и `WifiDirectTransport.connectTo`, чтобы
+      поднять fat-pipe TCP к этому пиру; флудинг оставлен как страховка.
+- ✅ **Voice notes.** `service/VoiceRecorder` пишет AAC@24 кбит/с моно;
+      hold-to-record кнопка в `ChatComposer` (slide-up отменяет запись),
+      файл уходит через тот же `FileTransfer.offer`-pipeline что и
+      обычные attachments.
+- ✅ **Карта последнего видения соседей.** PeerCard показывает
+      «Последний раз: 5 мин назад» из `last_seen_ms`; lat/lon исключены
+      намеренно, чтобы не раскрывать локацию через mesh.
+- ✅ **LoRa-bridge.** `transport/LoraTransport` — каркас с обнаружением
+      USB-устройств с known-VID (Heltec, RAK, Adafruit) и фрагментацией
+      по LoRa-MTU. Реальная передача через USB-serial оставлена как
+      no-op — подключается отдельная зависимость
+      `usb-serial-for-android` или вендорский SDK.
+
 ## P1 — Что ещё стоит сделать
 
-### Forward secrecy
-- [ ] **MLS / Signal Sender Keys для групп.** Текущий rekey-on-membership
-      даёт forward secrecy при добавлении/удалении, но не за пределами:
-      компрометация устройства всё ещё раскрывает все сообщения,
-      зашифрованные текущим shared key между двумя ротациями. Внедрить
-      либо Signal Sender Keys (per-sender ratchet) либо MLS (RFC 9420).
-- [ ] **Per-recipient session ratchet (Double Ratchet)** вместо чистого
-      ECDH — даст forward secrecy для 1:1 чатов.
-
-### Discovery / pairing UX
-- [ ] **Sound-pairing** (gg-wave / chirp.io) как fallback там, где нет
-      ни камеры, ни NFC, ни общей сети.
+### Forward secrecy (полные ratchet'ы)
+- [ ] **MLS (RFC 9420)** для групп — текущая реализация даёт forward
+      secrecy для каждого отправителя, но не post-compromise: восстановить
+      compromised chain ключ через DH-ratchet может только MLS / Signal.
+- [ ] **DH-ratchet поверх 1:1 chain ratchet.** Каждые N сообщений
+      генерировать ephemeral X25519 пару и встраивать pubkey в envelope
+      для пере-derive root key — настоящий Double Ratchet вместо текущего
+      symmetric-only chain.
 
 ### Стабильность транспорта
-- [ ] **Auto-upgrade с BLE на Wi-Fi Direct** для больших передач: при
-      получении FILE_OFFER предложить upgrade-канал, согласовать роли
-      group-owner/client, передать чанки через TCP.
-
-## P2 — приятные мелочи
-
-- [ ] **Voice notes / push-to-talk** через Wi-Fi Direct (Opus в
-      контейнере OGG, ~24 кбит/с).
-- [ ] **Карта последнего видения соседей** (lat/lon в локальном
-      состоянии устройства, **не** в mesh-payload).
-- [ ] **Bridge к LoRa-модулю** через USB-OTG / Bluetooth-classic для
-      километровых дальностей. Архитектурно это просто ещё один
-      `Transport`-имплементер.
-- [ ] **Веб-интерфейс по WebSocket** на самом телефоне для
-      управления с десктопа без интернета (через тот же Wi-Fi).
+- [ ] **End-to-end перенаправление файлов на TCP.** Сейчас `WIFI_HINT`
+      устанавливает back-channel, но `FileTransfer` не знает про него
+      явно — сообщения уходят на все транспорты, ratx дедуплицирует.
+      Можно ускорить, явно отправляя FILE_CHUNK только в TCP-линк к
+      получателю когда такой есть.
 
 ## Известные риски
 

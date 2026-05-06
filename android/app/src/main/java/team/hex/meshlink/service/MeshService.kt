@@ -28,17 +28,21 @@ import team.hex.meshlink.crypto.Crypto
 import team.hex.meshlink.files.FileTransfer
 import team.hex.meshlink.groups.GroupInvitePayload
 import team.hex.meshlink.groups.Groups
+import team.hex.meshlink.groups.PeerChain
 import team.hex.meshlink.mesh.MeshMessage
 import team.hex.meshlink.mesh.MeshRouter
 import team.hex.meshlink.mesh.MsgType
 import team.hex.meshlink.mesh.Outbox
 import team.hex.meshlink.mesh.PeerIdentity
+import team.hex.meshlink.mesh.SenderKeyDistribution
+import team.hex.meshlink.mesh.WifiHintPayload
 import team.hex.meshlink.pairing.PairingPayload
 import team.hex.meshlink.storage.ChatMessageRow
 import team.hex.meshlink.storage.MeshDb
 import team.hex.meshlink.storage.PeerRow
 import team.hex.meshlink.storage.RoomSeenStore
 import team.hex.meshlink.transport.LanTransport
+import team.hex.meshlink.transport.LoraTransport
 import team.hex.meshlink.transport.SendHint
 import team.hex.meshlink.transport.Transport
 import team.hex.meshlink.transport.WifiDirectTransport
@@ -64,6 +68,8 @@ class MeshService : Service() {
     private lateinit var outbox: Outbox
     private lateinit var fileTransfer: FileTransfer
     private lateinit var groups: Groups
+    private lateinit var peerChain: PeerChain
+    private lateinit var voiceRecorder: VoiceRecorder
     private lateinit var db: MeshDb
     private lateinit var identity: Crypto.IdentityKeys
 
@@ -90,14 +96,17 @@ class MeshService : Service() {
         fileTransfer = FileTransfer(this, db, router) { peerId, type, payload ->
             sendEncrypted1to1(peerId, type, payload)
         }
-        groups = Groups(db) { peerId, type, payload ->
+        groups = Groups(db, identity.nodeId()) { peerId, type, payload ->
             sendEncrypted1to1(peerId, type, payload)
         }
+        peerChain = PeerChain(db, identity.nodeId(), identity.xPriv)
+        voiceRecorder = VoiceRecorder(this)
 
         transports = listOf(
             BleTransport(this),
             LanTransport(this),
             WifiDirectTransport(this),
+            LoraTransport(this),
         )
 
         pumpJob = scope.launch {
@@ -158,8 +167,9 @@ class MeshService : Service() {
         val xPub = router.peerById(peerNodeId)?.xPub
             ?: db.peerDao().byId(peerNodeId)?.xPub
             ?: return
-        val sessionKey = Crypto.deriveSessionKey(identity.xPriv, xPub)
-        val ct = Crypto.aesGcmEncrypt(sessionKey, text.toByteArray(Charsets.UTF_8))
+        // Forward-secret per-message ratchet — each text consumes a chain
+        // key step on our send chain to this peer.
+        val ct = peerChain.encrypt(peerNodeId, xPub, text.toByteArray(Charsets.UTF_8)) ?: return
         val envelope = router.buildSigned(MsgType.TEXT, ct, recipientId = peerNodeId)
 
         db.chatDao().upsert(ChatMessageRow(
@@ -208,6 +218,31 @@ class MeshService : Service() {
     suspend fun offerFile(peerId: String, uri: Uri, displayName: String): String =
         fileTransfer.offer(peerId, uri, displayName)
 
+    /** Tap-and-hold UI calls this when the user starts holding the mic. */
+    fun startVoiceNote(): Boolean = voiceRecorder.start()
+
+    /**
+     * Stop the active voice recording and ship it to [peerId] as a file
+     * transfer. Returns true on success, false if there was no active
+     * recording or the file couldn't be sent.
+     */
+    suspend fun stopAndSendVoiceNote(peerId: String): Boolean {
+        val file = voiceRecorder.stop() ?: return false
+        if (!file.exists() || file.length() <= 0) {
+            file.delete(); return false
+        }
+        runCatching {
+            fileTransfer.offer(peerId, file.asVoiceNoteUri(),
+                "voice-${file.nameWithoutExtension}.m4a")
+        }
+        return true
+    }
+
+    /** Drop the recording without sending. */
+    fun cancelVoiceNote() = voiceRecorder.cancel()
+
+    fun isRecordingVoiceNote(): Boolean = voiceRecorder.isRecording
+
     /** Called by the chat screen on entry; clears unread badges + dismisses tray. */
     suspend fun markScopeRead(scopeId: String, scopeKind: String) {
         db.chatDao().markScopeRead(scopeId, scopeKind)
@@ -222,8 +257,14 @@ class MeshService : Service() {
         val xPub = router.peerById(peerId)?.xPub
             ?: db.peerDao().byId(peerId)?.xPub
             ?: return
-        val sessionKey = Crypto.deriveSessionKey(identity.xPriv, xPub)
-        val ct = Crypto.aesGcmEncrypt(sessionKey, payload)
+        // Route every 1:1 ciphertext through the forward-secret chain so
+        // file offers, group invites, sender-key distributions, acks and
+        // typing pings all share the same forward-secret guarantees as
+        // chat text.
+        val ct = peerChain.encrypt(peerId, xPub, payload) ?: run {
+            val sessionKey = Crypto.deriveSessionKey(identity.xPriv, xPub)
+            Crypto.aesGcmEncrypt(sessionKey, payload)
+        }
         router.send(type, ct, recipientId = peerId)
     }
 
@@ -246,6 +287,8 @@ class MeshService : Service() {
                     val pt = decryptFromPeer(msg) ?: return@collect
                     fileTransfer.onIncomingPlaintext(msg, pt)
                 }
+                MsgType.WIFI_HINT -> handleWifiHint(msg)
+                MsgType.GROUP_SENDER_KEY -> handleSenderKey(msg)
                 else -> { /* ANNOUNCE handled inside router; others ignored */ }
             }
         }
@@ -309,7 +352,7 @@ class MeshService : Service() {
     private suspend fun handleIncomingGroupInvite(msg: MeshMessage) {
         val pt = decryptFromPeer(msg) ?: return
         val invite = GroupInvitePayload.fromBytes(pt) ?: return
-        groups.acceptInvite(invite)
+        groups.acceptInvite(invite, fromPeer = msg.senderId)
     }
 
     private suspend fun handleReadReceipt(msg: MeshMessage) {
@@ -317,11 +360,18 @@ class MeshService : Service() {
         db.chatDao().setDelivery(pt.toString(Charsets.UTF_8), "read")
     }
 
-    private fun decryptFromPeer(msg: MeshMessage): ByteArray? {
-        val xPub = router.peerById(msg.senderId)?.xPub ?: return null
+    private suspend fun decryptFromPeer(msg: MeshMessage): ByteArray? {
+        val xPub = router.peerById(msg.senderId)?.xPub
+            ?: db.peerDao().byId(msg.senderId)?.xPub
+            ?: return null
+        val raw = Crypto.unb64(msg.payloadB64)
+        // Prefer the forward-secret chain ratchet; fall back to legacy
+        // raw AES-GCM(session_key) so peers that haven't migrated yet
+        // still get their messages decrypted.
+        peerChain.decrypt(msg.senderId, xPub, raw)?.let { return it }
         val sessionKey = Crypto.deriveSessionKey(identity.xPriv, xPub)
         return runCatching {
-            Crypto.aesGcmDecrypt(sessionKey, Crypto.unb64(msg.payloadB64))
+            Crypto.aesGcmDecrypt(sessionKey, raw)
         }.getOrNull()
     }
 
@@ -351,11 +401,65 @@ class MeshService : Service() {
     }
 
     private suspend fun announceLoop() {
+        var hintCounter = 0
         while (true) {
             router.broadcastAnnounce()
             router.graph.gc()
+            // Every fourth announce (~60s) advertise our Wi-Fi address so
+            // peers in the mesh can promote BLE-relayed flows to a fat
+            // TCP back-channel for files / voice / large group blasts.
+            if (hintCounter++ % 4 == 0) broadcastWifiHint()
             delay(15_000)
         }
+    }
+
+    /**
+     * Tell the mesh "if you can reach me on this IPv4 / port, prefer it
+     * over BLE for everything bigger than a chat message." Receivers feed
+     * the address into [LanTransport.connectTcp] (LAN back-channel) and
+     * [WifiDirectTransport.connectTo] (WD fat pipe). Unreachable peers
+     * silently drop, so this is a hint, not a requirement.
+     */
+    private fun broadcastWifiHint() {
+        val ip = pickLocalIpv4() ?: return
+        val payload = WifiHintPayload(
+            host = ip,
+            lanPort = LanTransport.TCP_PORT,
+            wdPort = WifiDirectTransport.LISTEN_PORT,
+        ).encode()
+        router.send(MsgType.WIFI_HINT, payload, recipientId = null, ttl = 3)
+    }
+
+    private fun handleWifiHint(msg: MeshMessage) {
+        val hint = WifiHintPayload.decodeOrNull(Crypto.unb64(msg.payloadB64)) ?: return
+        // Only chase the upgrade for peers we trust enough to have an
+        // identity for — otherwise we'd connect to whoever screams loudest.
+        if (router.peerById(msg.senderId) == null) return
+        for (t in transports) when (t) {
+            is LanTransport -> t.connectTcp(hint.host, hint.lanPort)
+            is WifiDirectTransport -> t.connectTo(hint.host, hint.wdPort)
+            else -> {}
+        }
+    }
+
+    private suspend fun handleSenderKey(msg: MeshMessage) {
+        val pt = decryptFromPeer(msg) ?: return
+        val seed = SenderKeyDistribution.decodeOrNull(pt) ?: return
+        groups.acceptSenderKey(seed.groupId, msg.senderId, seed)
+    }
+
+    private fun pickLocalIpv4(): String? {
+        return runCatching {
+            for (iface in java.net.NetworkInterface.getNetworkInterfaces()) {
+                if (!iface.isUp || iface.isLoopback) continue
+                for (a in iface.inetAddresses) {
+                    if (a is java.net.Inet4Address && !a.isLoopbackAddress) {
+                        return@runCatching a.hostAddress
+                    }
+                }
+            }
+            null
+        }.getOrNull()
     }
 
     private fun startForegroundCompat() {
