@@ -25,9 +25,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
@@ -695,7 +701,9 @@ private fun PairingScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             GlassSurface(
@@ -762,24 +770,30 @@ private fun PairingScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
                     Spacer(Modifier.height(8.dp))
+                    val invalid = stringResource(R.string.status_invalid_pairing)
+                    val trustedFmt = stringResource(R.string.status_trusted)
+                    val submit: () -> Unit = submit@{
+                        val payload = PairingPayload.decodeOrNull(input.trim())
+                        if (payload == null) { status = invalid; return@submit }
+                        val svc = getService() ?: return@submit
+                        scope.launch {
+                            svc.acceptPairing(payload)
+                            status = trustedFmt.format(payload.name, payload.nodeId)
+                            input = ""
+                        }
+                    }
                     GlassTextField(
                         value = input,
                         onValueChange = { input = it },
                         placeholder = stringResource(R.string.placeholder_pairing),
+                        singleLine = true,
+                        imeAction = ImeAction.Done,
+                        onImeAction = submit,
                     )
                     Spacer(Modifier.height(12.dp))
-                    val invalid = stringResource(R.string.status_invalid_pairing)
-                    val trustedFmt = stringResource(R.string.status_trusted)
                     Button(
-                        onClick = {
-                            val payload = PairingPayload.decodeOrNull(input.trim())
-                            if (payload == null) { status = invalid; return@Button }
-                            val svc = getService() ?: return@Button
-                            scope.launch {
-                                svc.acceptPairing(payload)
-                                status = trustedFmt.format(payload.name, payload.nodeId)
-                            }
-                        },
+                        onClick = submit,
+                        modifier = Modifier.fillMaxWidth(),
                     ) { Text(stringResource(R.string.action_trust_peer)) }
                     status?.let {
                         Spacer(Modifier.height(8.dp))
@@ -861,7 +875,9 @@ private fun SettingsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
@@ -957,7 +973,13 @@ private fun SettingsScreen(
             val savedMsg = stringResource(R.string.status_saved)
             Button(
                 onClick = {
-                    app.identityStore.setDisplayName(name.ifBlank { "Anon" })
+                    val newName = name.trim().ifBlank { "Anon" }
+                    // Route through the service so the router's announce
+                    // payload picks up the change without a restart.
+                    getService()?.setDisplayName(newName) ?: run {
+                        app.identityStore.setDisplayName(newName)
+                    }
+                    name = newName
                     status = savedMsg
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -1341,7 +1363,11 @@ private fun GlassTextField(
     placeholder: String,
     modifier: Modifier = Modifier,
     trailing: @Composable (() -> Unit)? = null,
+    singleLine: Boolean = false,
+    imeAction: ImeAction = ImeAction.Default,
+    onImeAction: (() -> Unit)? = null,
 ) {
+    val keyboard = LocalSoftwareKeyboardController.current
     GlassSurface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1350,7 +1376,14 @@ private fun GlassTextField(
             value = value,
             onValueChange = onValueChange,
             placeholder = { Text(placeholder) },
-            singleLine = false,
+            singleLine = singleLine,
+            keyboardOptions = KeyboardOptions(imeAction = imeAction),
+            keyboardActions = KeyboardActions(
+                onDone = { onImeAction?.invoke(); keyboard?.hide() },
+                onGo = { onImeAction?.invoke(); keyboard?.hide() },
+                onSearch = { onImeAction?.invoke(); keyboard?.hide() },
+                onSend = { onImeAction?.invoke(); keyboard?.hide() },
+            ),
             colors = TextFieldDefaults.colors(
                 unfocusedContainerColor = Color.Transparent,
                 focusedContainerColor = Color.Transparent,

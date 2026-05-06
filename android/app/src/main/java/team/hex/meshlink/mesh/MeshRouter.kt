@@ -33,12 +33,19 @@ import kotlin.math.abs
  */
 class MeshRouter(
     private val identity: Crypto.IdentityKeys,
-    private val displayName: String,
+    initialDisplayName: String,
     /** Optional persistent dedup store. Called best-effort, off the hot path. */
     private val seenStore: SeenStore = SeenStore.NoOp,
 ) {
     private val tag = "MeshRouter"
     val nodeId: String = identity.nodeId()
+
+    /**
+     * Display name advertised in announces. Mutable so the user can rename
+     * themselves at runtime — the next announce picks up the new value
+     * without requiring a service restart.
+     */
+    @Volatile var displayName: String = initialDisplayName
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val rng = SecureRandom()
@@ -173,14 +180,19 @@ class MeshRouter(
         ).signedWith(identity.edPriv)
     }
 
-    /** Periodic "I exist, here are my keys" beacon. */
+    /**
+     * Periodic "I exist, here are my keys" beacon. The default TTL is
+     * deliberately generous so identities propagate across long mesh
+     * paths — without this, peers more than three hops away never learn
+     * each others' edPub keys and can't validate signed envelopes.
+     */
     fun broadcastAnnounce() {
         val payload = AnnouncePayload(
             edPubB64 = Crypto.b64(identity.edPub),
             xPubB64 = Crypto.b64(identity.xPub),
             displayName = displayName,
         ).encode()
-        send(MsgType.ANNOUNCE, payload, recipientId = null, ttl = 3)
+        send(MsgType.ANNOUNCE, payload, recipientId = null, ttl = MeshMessage.DEFAULT_TTL)
     }
 
     /** Called by transport for every received frame. */

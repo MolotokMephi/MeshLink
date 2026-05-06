@@ -1,5 +1,7 @@
 package team.hex.meshlink.groups
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import team.hex.meshlink.crypto.Crypto
 import team.hex.meshlink.crypto.SenderKeys
@@ -10,6 +12,7 @@ import team.hex.meshlink.storage.GroupRow
 import team.hex.meshlink.storage.GroupSenderRow
 import team.hex.meshlink.storage.MeshDb
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Group chats with **Signal-style sender keys** for forward secrecy.
@@ -37,6 +40,17 @@ class Groups(
     private val selfNodeId: String,
     private val sendEncrypted: suspend (peerId: String, type: Int, payload: ByteArray) -> Unit,
 ) {
+    /**
+     * Per-(group, sender) lock so concurrent encrypt/decrypt of the same
+     * sender chain can't race into key reuse. We key on (groupId, senderId)
+     * because send and receive are completely independent chains held by
+     * different peers; they only share the same lock when self happens to
+     * be the sender on both sides (impossible by construction).
+     */
+    private val locks = ConcurrentHashMap<String, Mutex>()
+    private fun lockFor(groupId: String, senderId: String): Mutex =
+        locks.getOrPut("${'$'}groupId|${'$'}senderId") { Mutex() }
+
     /** Create a group locally and send sender keys to every invitee. */
     suspend fun createAndInvite(name: String, members: List<String>): String {
         val groupId = "g-" + UUID.randomUUID().toString().replace("-", "").take(14)
@@ -99,22 +113,24 @@ class Groups(
      * [SenderKeyMessage] JSON), or null if our chain isn't seeded yet.
      */
     suspend fun encryptGroupText(groupId: String, text: String): ByteArray? {
-        val state = db.groupSenderDao().get(groupId, selfNodeId) ?: run {
-            seedSelfChain(groupId)
-            db.groupSenderDao().get(groupId, selfNodeId) ?: return null
+        return lockFor(groupId, selfNodeId).withLock {
+            val state = db.groupSenderDao().get(groupId, selfNodeId) ?: run {
+                seedSelfChain(groupId)
+                db.groupSenderDao().get(groupId, selfNodeId) ?: return@withLock null
+            }
+            val key = SenderKeys.messageKey(state.chainKey, state.counter)
+            val ciphertext = Crypto.aesGcmEncrypt(key, text.toByteArray(Charsets.UTF_8))
+            val payload = SenderKeyMessage(
+                senderId = selfNodeId,
+                counter = state.counter,
+                ciphertextB64 = Crypto.b64(ciphertext),
+            ).toBytes()
+            db.groupSenderDao().upsert(state.copy(
+                chainKey = SenderKeys.advance(state.chainKey),
+                counter = state.counter + 1,
+            ))
+            payload
         }
-        val key = SenderKeys.messageKey(state.chainKey, state.counter)
-        val ciphertext = Crypto.aesGcmEncrypt(key, text.toByteArray(Charsets.UTF_8))
-        val payload = SenderKeyMessage(
-            senderId = selfNodeId,
-            counter = state.counter,
-            ciphertextB64 = Crypto.b64(ciphertext),
-        ).toBytes()
-        db.groupSenderDao().upsert(state.copy(
-            chainKey = SenderKeys.advance(state.chainKey),
-            counter = state.counter + 1,
-        ))
-        return payload
     }
 
     /**
@@ -134,24 +150,28 @@ class Groups(
     }
 
     private suspend fun decryptSenderKey(groupId: String, msg: SenderKeyMessage): String? {
-        val state = db.groupSenderDao().get(groupId, msg.senderId) ?: return null
-        if (msg.counter < state.counter) return null   // anti-replay
-        // Fast-forward the chain to the message counter (skipping holes).
-        var chain = state.chainKey
-        var counter = state.counter
-        while (counter < msg.counter) {
-            chain = SenderKeys.advance(chain)
-            counter++
-            if (counter - state.counter > 1024) return null // unreasonable jump
+        return lockFor(groupId, msg.senderId).withLock {
+            val state = db.groupSenderDao().get(groupId, msg.senderId)
+                ?: return@withLock null
+            if (msg.counter < state.counter) return@withLock null   // anti-replay
+            // Fast-forward the chain to the message counter (skipping holes).
+            var chain = state.chainKey
+            var counter = state.counter
+            while (counter < msg.counter) {
+                chain = SenderKeys.advance(chain)
+                counter++
+                if (counter - state.counter > 1024) return@withLock null
+            }
+            val key = SenderKeys.messageKey(chain, counter)
+            val ct = Crypto.unb64(msg.ciphertextB64)
+            val plain = runCatching { Crypto.aesGcmDecrypt(key, ct) }.getOrNull()
+                ?: return@withLock null
+            db.groupSenderDao().upsert(state.copy(
+                chainKey = SenderKeys.advance(chain),
+                counter = counter + 1,
+            ))
+            plain.toString(Charsets.UTF_8)
         }
-        val key = SenderKeys.messageKey(chain, counter)
-        val ct = Crypto.unb64(msg.ciphertextB64)
-        val plain = runCatching { Crypto.aesGcmDecrypt(key, ct) }.getOrNull() ?: return null
-        db.groupSenderDao().upsert(state.copy(
-            chainKey = SenderKeys.advance(chain),
-            counter = counter + 1,
-        ))
-        return plain.toString(Charsets.UTF_8)
     }
 
     /**

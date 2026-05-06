@@ -1,11 +1,14 @@
 package team.hex.meshlink.groups
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import team.hex.meshlink.crypto.Crypto
 import team.hex.meshlink.crypto.SenderKeys
 import team.hex.meshlink.mesh.MeshMessage
 import team.hex.meshlink.storage.MeshDb
 import team.hex.meshlink.storage.PeerChainRow
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 1:1 forward-secret message channel.
@@ -29,21 +32,32 @@ class PeerChain(
     private val selfNodeId: String,
     private val ourXPriv: ByteArray,
 ) {
+    /**
+     * Per-(peer, direction) lock around the read-modify-write ratchet
+     * step. Without it two concurrent encrypt() calls would read the
+     * same chain key, derive the same AES-GCM message key, and produce
+     * a key+nonce reuse — fatal for AES-GCM confidentiality.
+     */
+    private val locks = ConcurrentHashMap<String, Mutex>()
+    private fun lockFor(peerId: String, direction: String): Mutex =
+        locks.getOrPut("${'$'}direction:${'$'}peerId") { Mutex() }
 
     /**
      * Encrypt with our send chain to [peerId]. Returns the wire bytes
      * (a [PeerChainMessage] JSON). Initializes the chain on first call.
      */
     suspend fun encrypt(peerId: String, peerXPub: ByteArray, plaintext: ByteArray): ByteArray? {
-        val state = ensureChain(peerId, peerXPub, direction = "send", writerId = selfNodeId)
-        val msgKey = SenderKeys.messageKey(state.chainKey, state.counter)
-        val ciphertext = Crypto.aesGcmEncrypt(msgKey, plaintext)
-        val payload = PeerChainMessage(state.counter, Crypto.b64(ciphertext)).toBytes()
-        db.peerChainDao().upsert(state.copy(
-            chainKey = SenderKeys.advance(state.chainKey),
-            counter = state.counter + 1,
-        ))
-        return payload
+        return lockFor(peerId, "send").withLock {
+            val state = ensureChain(peerId, peerXPub, direction = "send", writerId = selfNodeId)
+            val msgKey = SenderKeys.messageKey(state.chainKey, state.counter)
+            val ciphertext = Crypto.aesGcmEncrypt(msgKey, plaintext)
+            val payload = PeerChainMessage(state.counter, Crypto.b64(ciphertext)).toBytes()
+            db.peerChainDao().upsert(state.copy(
+                chainKey = SenderKeys.advance(state.chainKey),
+                counter = state.counter + 1,
+            ))
+            payload
+        }
     }
 
     /**
@@ -53,23 +67,26 @@ class PeerChain(
      */
     suspend fun decrypt(peerId: String, peerXPub: ByteArray, payload: ByteArray): ByteArray? {
         val msg = PeerChainMessage.fromBytes(payload) ?: return null
-        val state = ensureChain(peerId, peerXPub, direction = "recv", writerId = peerId)
-        if (msg.counter < state.counter) return null
-        var chain = state.chainKey
-        var counter = state.counter
-        while (counter < msg.counter) {
-            chain = SenderKeys.advance(chain)
-            counter++
-            if (counter - state.counter > 1024) return null
+        return lockFor(peerId, "recv").withLock {
+            val state = ensureChain(peerId, peerXPub, direction = "recv", writerId = peerId)
+            if (msg.counter < state.counter) return@withLock null
+            var chain = state.chainKey
+            var counter = state.counter
+            while (counter < msg.counter) {
+                chain = SenderKeys.advance(chain)
+                counter++
+                if (counter - state.counter > 1024) return@withLock null
+            }
+            val key = SenderKeys.messageKey(chain, counter)
+            val ct = Crypto.unb64(msg.ciphertextB64)
+            val plain = runCatching { Crypto.aesGcmDecrypt(key, ct) }.getOrNull()
+                ?: return@withLock null
+            db.peerChainDao().upsert(state.copy(
+                chainKey = SenderKeys.advance(chain),
+                counter = counter + 1,
+            ))
+            plain
         }
-        val key = SenderKeys.messageKey(chain, counter)
-        val ct = Crypto.unb64(msg.ciphertextB64)
-        val plain = runCatching { Crypto.aesGcmDecrypt(key, ct) }.getOrNull() ?: return null
-        db.peerChainDao().upsert(state.copy(
-            chainKey = SenderKeys.advance(chain),
-            counter = counter + 1,
-        ))
-        return plain
     }
 
     private suspend fun ensureChain(

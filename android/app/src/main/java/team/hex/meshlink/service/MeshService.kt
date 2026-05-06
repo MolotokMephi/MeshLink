@@ -89,7 +89,7 @@ class MeshService : Service() {
 
         router = MeshRouter(
             identity = identity,
-            displayName = app.identityStore.displayName(),
+            initialDisplayName = app.identityStore.displayName(),
             seenStore = RoomSeenStore(db),
         )
         outbox = Outbox(db, router)
@@ -217,6 +217,18 @@ class MeshService : Service() {
 
     suspend fun offerFile(peerId: String, uri: Uri, displayName: String): String =
         fileTransfer.offer(peerId, uri, displayName)
+
+    /**
+     * Persist a new display name and refresh the router so the next
+     * outgoing announce carries it. Without this hook, the prefs change
+     * was invisible to the mesh until the foreground service restarted.
+     */
+    fun setDisplayName(name: String) {
+        val app = applicationContext as MeshLinkApp
+        app.identityStore.setDisplayName(name)
+        router.displayName = name
+        scope.launch { router.broadcastAnnounce() }
+    }
 
     /** Tap-and-hold UI calls this when the user starts holding the mic. */
     fun startVoiceNote(): Boolean = voiceRecorder.start()
