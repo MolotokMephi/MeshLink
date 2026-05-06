@@ -16,6 +16,14 @@ permissions:
   pull-requests: write
   issues: write
 
+# `actions/cache` and `actions/upload-artifact` still ship as Node 20
+# JavaScript actions; GitHub started warning that the toolchain is
+# deprecated and will be force-switched to Node 24 in June 2026. Opt
+# in early so the runner picks Node 24 immediately and the deprecation
+# warning stops appearing.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     name: Build & lint
@@ -94,13 +102,10 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest --stacktrace
         continue-on-error: true
 
-      - name: Upload artifacts
-        if: always()
+      - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts
-          path: |
-            android/app/build/outputs/apk/debug/*.apk
-            android/app/build/reports/
-            /tmp/gradle.log
+          name: meshlink-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: ignore
