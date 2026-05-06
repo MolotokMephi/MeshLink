@@ -56,6 +56,21 @@
     <string name="peer_detail_distance">~%1$s</string>
     <string name="peer_detail_no_distance">distance unknown</string>
 
+    <!-- Discovery status banner -->
+    <string name="discovery_status">%1$d nearby · %2$d/%3$d radios up</string>
+    <string name="discovery_hint">Pull peers within Bluetooth or shared Wi-Fi range to chat. Verify identities with QR / NFC for trust.</string>
+    <string name="discovery_grant">Grant permissions</string>
+    <string name="discovery_verify">Verify with QR</string>
+    <string name="transport_ble">Bluetooth LE</string>
+    <string name="transport_lan">Wi-Fi LAN</string>
+    <string name="transport_wifi_direct">Wi-Fi Direct</string>
+    <string name="transport_lora">LoRa</string>
+    <string name="transport_unknown">Unknown</string>
+    <string name="transport_state_running">on</string>
+    <string name="transport_state_starting">starting</string>
+    <string name="transport_state_failed">unavailable</string>
+    <string name="transport_state_stopped">off</string>
+
     <!-- Placeholders -->
     <string name="placeholder_message">Message…</string>
     <string name="placeholder_search_messages">Search messages…</string>

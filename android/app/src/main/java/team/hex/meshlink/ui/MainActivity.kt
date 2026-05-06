@@ -156,6 +156,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    /** Public hook for the UI: re-prompt for whatever's still missing. */
+    fun requestMeshPermissions() = ensurePermissionsAndStart()
+
     private fun ensurePermissionsAndStart() {
         val needed = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

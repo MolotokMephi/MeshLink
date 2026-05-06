@@ -200,8 +200,13 @@ private fun decodeImage(reader: MultiFormatReader, proxy: ImageProxy): String? {
     val plane = proxy.planes.firstOrNull() ?: return null
     val buffer = plane.buffer
     val data = ByteArray(buffer.remaining()).also { buffer.get(it) }
+    // CameraX delivers YUV_420_888 with rowStride that is usually >=
+    // image width on real devices (the Y-plane is padded). Passing
+    // proxy.width as dataWidth misaligns every row past the first and
+    // ZXing never locks onto the finder pattern.
+    val rowStride = plane.rowStride.coerceAtLeast(proxy.width)
     val source = PlanarYUVLuminanceSource(
-        data, proxy.width, proxy.height,
+        data, rowStride, proxy.height,
         0, 0, proxy.width, proxy.height, false,
     )
     val bitmap = BinaryBitmap(HybridBinarizer(source))

@@ -55,6 +55,21 @@
     <string name="peer_detail_distance">~%1$s</string>
     <string name="peer_detail_no_distance">расстояние неизвестно</string>
 
+    <!-- Discovery status banner -->
+    <string name="discovery_status">Рядом: %1$d · радио %2$d/%3$d</string>
+    <string name="discovery_hint">Пиры обнаруживаются автоматически в зоне Bluetooth или общего Wi-Fi. Подтвердите личность через QR или NFC, чтобы доверять собеседнику.</string>
+    <string name="discovery_grant">Выдать разрешения</string>
+    <string name="discovery_verify">Подтвердить через QR</string>
+    <string name="transport_ble">Bluetooth LE</string>
+    <string name="transport_lan">Wi-Fi LAN</string>
+    <string name="transport_wifi_direct">Wi-Fi Direct</string>
+    <string name="transport_lora">LoRa</string>
+    <string name="transport_unknown">Неизвестно</string>
+    <string name="transport_state_running">работает</string>
+    <string name="transport_state_starting">запуск…</string>
+    <string name="transport_state_failed">недоступно</string>
+    <string name="transport_state_stopped">отключено</string>
+
     <!-- Placeholders -->
     <string name="placeholder_message">Сообщение…</string>
     <string name="placeholder_search_messages">Поиск по сообщениям…</string>

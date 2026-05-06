@@ -180,7 +180,12 @@ class MeshService : Service() {
             outgoing = true,
             body = text,
             ts = envelope.timestamp,
-            delivery = "pending",
+            // Optimistic — the envelope is on the wire as soon as enqueue
+            // returns. Outbox flips to "delivered" on DELIVERY_ACK or to
+            // "failed" once we've exhausted retries; the user no longer
+            // stares at the pending dots forever when the recipient is
+            // genuinely offline.
+            delivery = "sent",
         ))
         outbox.enqueue(envelope)
     }
@@ -217,6 +222,21 @@ class MeshService : Service() {
 
     suspend fun offerFile(peerId: String, uri: Uri, displayName: String): String =
         fileTransfer.offer(peerId, uri, displayName)
+
+    /**
+     * Snapshot of every transport's runtime state so the home screen can
+     * show a "Bluetooth not granted / Wi-Fi unavailable" banner instead
+     * of leaving the user staring at an empty peer list with no idea why.
+     */
+    fun transportHealth(): List<TransportHealth> = transports.map { t ->
+        TransportHealth(
+            name = t.name,
+            state = t.state.value,
+            liveLinks = t.liveLinkCount,
+        )
+    }
+
+    fun directNeighbourCount(): Int = router.graph.snapshot().directNeighbours
 
     /**
      * Persist a new display name and refresh the router so the next
@@ -505,6 +525,13 @@ class MeshService : Service() {
             startForeground(FOREGROUND_ID, notif)
         }
     }
+
+    /** UI-friendly per-transport status. */
+    data class TransportHealth(
+        val name: String,
+        val state: team.hex.meshlink.transport.TransportState,
+        val liveLinks: Int,
+    )
 
     companion object {
         private const val FOREGROUND_ID = 0xBEEF

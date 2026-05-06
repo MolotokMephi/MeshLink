@@ -214,7 +214,7 @@ private fun HomeScreen(
                     onNewGroup = onNewGroup,
                     onPair = onPair,
                 )
-                1 -> PeerList(db = db, getService = getService, onClick = onPeer)
+                1 -> PeerList(db = db, getService = getService, onClick = onPeer, onPair = onPair)
                 2 -> GroupList(db = db, onClick = onGroup, onNewGroup = onNewGroup)
             }
         }
@@ -452,31 +452,136 @@ private fun PeerList(
     db: MeshDb,
     getService: () -> MeshService?,
     onClick: (PeerRow) -> Unit,
+    onPair: () -> Unit,
 ) {
     val peers by db.peerDao().streamAll().collectAsState(initial = emptyList())
-    if (peers.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            GlassSurface(
-                modifier = Modifier.padding(24.dp),
-                shape = RoundedCornerShape(28.dp),
-            ) {
-                Text(
-                    stringResource(R.string.empty_peers),
-                    modifier = Modifier.padding(20.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
-        return
-    }
+    val ctx = LocalContext.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        items(peers, key = { it.nodeId }) { p ->
-            PeerCard(p, getService = getService, onClick = { onClick(p) })
+        item("status") {
+            DiscoveryStatusCard(getService = getService, onPair = onPair)
         }
+        if (peers.isEmpty()) {
+            item("empty") {
+                GlassSurface(shape = RoundedCornerShape(20.dp)) {
+                    Text(
+                        stringResource(R.string.empty_peers),
+                        modifier = Modifier.padding(20.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        } else {
+            items(peers, key = { it.nodeId }) { p ->
+                PeerCard(p, getService = getService, onClick = { onClick(p) })
+            }
+        }
+    }
+}
+
+/**
+ * Per-transport health card surfaced at the top of the Nearby list.
+ * Tells the user which radios are up and lets them re-trigger the
+ * Bluetooth permission prompt — the most common reason peers don't
+ * show up is that the user dismissed the system dialog earlier.
+ */
+@Composable
+private fun DiscoveryStatusCard(
+    getService: () -> MeshService?,
+    onPair: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val activity = ctx as? MainActivity
+    val health = remember(getService()) {
+        getService()?.transportHealth() ?: emptyList()
+    }
+    val direct = remember(getService()) {
+        getService()?.directNeighbourCount() ?: 0
+    }
+    val anyFailed = health.any { it.state == team.hex.meshlink.transport.TransportState.Failed }
+    GlassSurface(shape = RoundedCornerShape(20.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LivePulse(
+                    color = if (anyFailed) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.size(10.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stringResource(
+                        R.string.discovery_status, direct,
+                        health.count { it.state == team.hex.meshlink.transport.TransportState.Running },
+                        health.size,
+                    ),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                stringResource(R.string.discovery_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            )
+            for (h in health) {
+                Spacer(Modifier.height(4.dp))
+                TransportHealthRow(h)
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { activity?.requestMeshPermissions() },
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.discovery_grant)) }
+                OutlinedButton(
+                    onClick = onPair,
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.discovery_verify)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TransportHealthRow(h: MeshService.TransportHealth) {
+    val labelRes = when (h.name) {
+        "ble" -> R.string.transport_ble
+        "lan" -> R.string.transport_lan
+        "wifi-direct" -> R.string.transport_wifi_direct
+        "lora" -> R.string.transport_lora
+        else -> R.string.transport_unknown
+    }
+    val color = when (h.state) {
+        team.hex.meshlink.transport.TransportState.Running -> MaterialTheme.colorScheme.secondary
+        team.hex.meshlink.transport.TransportState.Starting -> MaterialTheme.colorScheme.tertiary
+        team.hex.meshlink.transport.TransportState.Failed -> MaterialTheme.colorScheme.error
+        team.hex.meshlink.transport.TransportState.Stopped -> MaterialTheme.colorScheme.outline
+    }
+    val stateRes = when (h.state) {
+        team.hex.meshlink.transport.TransportState.Running -> R.string.transport_state_running
+        team.hex.meshlink.transport.TransportState.Starting -> R.string.transport_state_starting
+        team.hex.meshlink.transport.TransportState.Failed -> R.string.transport_state_failed
+        team.hex.meshlink.transport.TransportState.Stopped -> R.string.transport_state_stopped
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(color, RoundedCornerShape(999.dp)),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(stringResource(labelRes), style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            stringResource(stateRes) + " · " + h.liveLinks,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+        )
     }
 }
 
