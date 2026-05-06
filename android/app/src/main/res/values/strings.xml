@@ -79,7 +79,7 @@
     <string name="transport_ble">Bluetooth LE</string>
     <string name="transport_lan">Wi-Fi LAN</string>
     <string name="transport_wifi_direct">Wi-Fi Direct</string>
-    <string name="transport_lora">LoRa</string>
+    <string name="transport_wifi_aware">Wi-Fi Aware</string>
     <string name="transport_unknown">Unknown</string>
     <string name="transport_state_running">on</string>
     <string name="transport_state_starting">starting</string>

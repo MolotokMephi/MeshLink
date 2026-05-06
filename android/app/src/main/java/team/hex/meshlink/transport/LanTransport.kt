@@ -5,7 +5,10 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +64,13 @@ class LanTransport(private val context: Context) : Transport {
     private var tcpJob: Job? = null
     private val tcpLinks = ConcurrentHashMap<String, LanTcpLink>()
 
+    // mDNS / NSD discovery — registers our TCP listener as `_meshlink._tcp`
+    // so peers on the same LAN can find us even when UDP multicast is
+    // filtered (corporate APs, some hotspots, captive-portal networks).
+    private var nsdManager: NsdManager? = null
+    private var nsdRegistration: NsdManager.RegistrationListener? = null
+    private var nsdDiscovery: NsdManager.DiscoveryListener? = null
+
     /** Connection attempts in flight, deduped by key, so we don't spam SYNs. */
     private val tcpAttempts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
@@ -99,6 +109,7 @@ class LanTransport(private val context: Context) : Transport {
             rxJob = scope.launch { rxLoop(sock, group) }
             startTcpServer()
             registerNetworkCallback()
+            startNsd()
             _state.value = TransportState.Running
         } catch (t: Throwable) {
             Log.w(tag, "start failed: $t")
@@ -158,8 +169,100 @@ class LanTransport(private val context: Context) : Transport {
         tcpLinks.clear()
         reassemblers.clear()
         seenSenders = 0
+        stopNsd()
         scope.cancel()
         _state.value = TransportState.Stopped
+    }
+
+    /**
+     * Advertise our TCP listener as `_meshlink._tcp` and start watching
+     * the same service on the local link. Discovery uses Android's NSD
+     * (Network Service Discovery, mDNS-based), which works on every
+     * post-Marshmallow device and routinely beats UDP multicast on
+     * corporate networks where group traffic is filtered.
+     */
+    private fun startNsd() {
+        val mgr = context.getSystemService(Context.NSD_SERVICE) as? NsdManager ?: return
+        nsdManager = mgr
+        runCatching {
+            val info = NsdServiceInfo().apply {
+                serviceName = "meshlink-${(System.nanoTime() and 0xFFFF).toString(16)}"
+                serviceType = NSD_SERVICE_TYPE
+                port = TCP_PORT
+            }
+            val reg = object : NsdManager.RegistrationListener {
+                override fun onServiceRegistered(serviceInfo: NsdServiceInfo) {}
+                override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                    Log.w(tag, "NSD register failed: $errorCode")
+                }
+                override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) {}
+                override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+            }
+            mgr.registerService(info, NsdManager.PROTOCOL_DNS_SD, reg)
+            nsdRegistration = reg
+        }
+        runCatching {
+            val disco = object : NsdManager.DiscoveryListener {
+                override fun onDiscoveryStarted(serviceType: String) {}
+                override fun onDiscoveryStopped(serviceType: String) {}
+                override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                    Log.w(tag, "NSD discovery start failed: $errorCode")
+                }
+                override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+                override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                    resolveAndConnect(mgr, serviceInfo)
+                }
+                override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
+            }
+            mgr.discoverServices(NSD_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, disco)
+            nsdDiscovery = disco
+        }
+    }
+
+    private fun stopNsd() {
+        val mgr = nsdManager ?: return
+        runCatching { nsdRegistration?.let { mgr.unregisterService(it) } }
+        runCatching { nsdDiscovery?.let { mgr.stopServiceDiscovery(it) } }
+        nsdRegistration = null
+        nsdDiscovery = null
+        nsdManager = null
+    }
+
+    /**
+     * Resolve the service info into a host+port and open a TCP back-channel.
+     * The Tiramisu-and-up `registerServiceInfoCallback` path is preferred
+     * because the legacy `resolveService` API is single-shot and racy.
+     */
+    private fun resolveAndConnect(mgr: NsdManager, info: NsdServiceInfo) {
+        if (info.serviceName.startsWith("meshlink-").not()) return
+        // Skip our own advertisement: NSD can echo it back to us.
+        if (info.serviceName == nsdRegistration?.let {
+                (it as? Any)?.toString()
+            }) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val cb = object : NsdManager.ServiceInfoCallback {
+                override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) {}
+                override fun onServiceUpdated(serviceInfo: NsdServiceInfo) {
+                    val host = serviceInfo.hostAddresses.firstOrNull()?.hostAddress ?: return
+                    connectTcp(host, serviceInfo.port)
+                    runCatching { mgr.unregisterServiceInfoCallback(this) }
+                }
+                override fun onServiceLost() {}
+                override fun onServiceInfoCallbackUnregistered() {}
+            }
+            runCatching {
+                mgr.registerServiceInfoCallback(info, java.util.concurrent.Executors.newSingleThreadExecutor(), cb)
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            mgr.resolveService(info, object : NsdManager.ResolveListener {
+                override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+                override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                    val host = serviceInfo.host?.hostAddress ?: return
+                    connectTcp(host, serviceInfo.port)
+                }
+            })
+        }
     }
 
     override fun broadcast(frame: ByteArray, hint: SendHint) {
@@ -303,6 +406,8 @@ class LanTransport(private val context: Context) : Transport {
     companion object {
         private const val GROUP = "239.42.42.42"
         private const val PORT = 43210
+        /** mDNS service type for meshlink discovery (`_meshlink._tcp`). */
+        private const val NSD_SERVICE_TYPE = "_meshlink._tcp."
 
         /** Conservative IPv4 link MTU - IP/UDP headers; fits everywhere. */
         const val MAX_DATAGRAM = 1400

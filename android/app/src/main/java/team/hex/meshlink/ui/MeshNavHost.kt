@@ -37,14 +37,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import android.content.pm.PackageManager
 import androidx.compose.material3.Button
@@ -635,7 +635,7 @@ private fun TransportHealthRow(h: MeshService.TransportHealth) {
         "ble" -> R.string.transport_ble
         "lan" -> R.string.transport_lan
         "wifi-direct" -> R.string.transport_wifi_direct
-        "lora" -> R.string.transport_lora
+        "wifi-aware" -> R.string.transport_wifi_aware
         else -> R.string.transport_unknown
     }
     val color = when (h.state) {
@@ -914,7 +914,7 @@ private fun PairingScreen(
             title = stringResource(R.string.pairing_title),
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
         )
@@ -1069,7 +1069,7 @@ private fun SettingsScreen(
             title = stringResource(R.string.settings_title),
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
         )
@@ -1217,7 +1217,7 @@ private fun NewGroupScreen(
             title = stringResource(R.string.new_group_title),
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
         )
@@ -1267,7 +1267,7 @@ private fun NewGroupScreen(
                             }
                             if (isOn) {
                                 Icon(
-                                    Icons.Filled.Send, contentDescription = null,
+                                    Icons.AutoMirrored.Filled.Send, contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
@@ -1342,7 +1342,7 @@ private fun ChatScreen(
             title = title,
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
             actions = {
@@ -1481,7 +1481,7 @@ private fun ChatComposer(
                     .clip(RoundedCornerShape(999.dp))
                     .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp)),
             ) {
-                Icon(Icons.Filled.Send, contentDescription = stringResource(R.string.action_send),
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.action_send),
                     tint = MaterialTheme.colorScheme.onPrimary)
             }
         }
@@ -1650,7 +1650,7 @@ private fun GroupInfoScreen(
             title = group?.name ?: stringResource(R.string.tab_groups),
             leading = {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                 }
             },
         )

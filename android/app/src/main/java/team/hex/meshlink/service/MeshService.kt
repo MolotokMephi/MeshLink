@@ -44,6 +44,7 @@ import team.hex.meshlink.storage.RoomSeenStore
 import team.hex.meshlink.transport.LanTransport
 import team.hex.meshlink.transport.SendHint
 import team.hex.meshlink.transport.Transport
+import team.hex.meshlink.transport.WifiAwareTransport
 import team.hex.meshlink.transport.WifiDirectTransport
 
 /**
@@ -105,6 +106,7 @@ class MeshService : Service() {
             BleTransport(this),
             LanTransport(this),
             WifiDirectTransport(this),
+            WifiAwareTransport(this),
         )
 
         pumpJob = scope.launch {
