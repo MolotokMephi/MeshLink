@@ -15,10 +15,6 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
-        // Vector launcher icons + multi-density assets ship as VectorDrawable
-        // so we render correctly on Samsung's high-density displays without
-        // bundling raster fallbacks for every bucket.
-        vectorDrawables.useSupportLibrary = true
     }
 
     buildTypes {
@@ -37,22 +33,13 @@ android {
     }
 
     compileOptions {
-        // Java 17 on the toolchain matches the runtime contract for
-        // current Android Studio + AGP 8.x.
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        isCoreLibraryDesugaringEnabled = true
     }
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs = freeCompilerArgs + listOf(
-            "-opt-in=kotlinx.serialization.ExperimentalSerializationApi",
-        )
-    }
+    kotlinOptions { jvmTarget = "17" }
 
     buildFeatures {
         compose = true
-        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
@@ -68,16 +55,10 @@ android {
         )
     }
     lint {
-        // Production builds shouldn't blow up on translation gaps in a
-        // beta build; tighten this once strings are professionally
-        // localized.
         abortOnError = false
         warningsAsErrors = false
         checkReleaseBuilds = true
         disable += setOf("MissingTranslation")
-    }
-    testOptions {
-        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -86,10 +67,7 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
-
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
