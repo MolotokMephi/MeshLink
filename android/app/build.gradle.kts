@@ -55,6 +55,10 @@ dependencies {
     androidTestImplementation(composeBom)
 
     implementation("androidx.core:core-ktx:1.13.1")
+    // Splash Screen API: cold-start splash with reveal animation; on
+    // API 31+ it bridges into the system SplashScreen, on older APIs
+    // it falls back to a windowBackground-driven legacy splash.
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")

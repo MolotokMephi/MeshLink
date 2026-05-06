@@ -63,6 +63,9 @@
     <string name="peer_action_pair">Pair this peer</string>
     <string name="permission_already_granted">All permissions are already granted.</string>
 
+    <!-- Chat warnings -->
+    <string name="chat_no_fat_pipe">Only Bluetooth link is live — files and voice notes will queue until Wi-Fi or Wi-Fi Direct connects.</string>
+
     <!-- Peer detail -->
     <string name="peer_detail_last_seen">Last seen %1$s</string>
     <string name="peer_detail_distance">~%1$s</string>

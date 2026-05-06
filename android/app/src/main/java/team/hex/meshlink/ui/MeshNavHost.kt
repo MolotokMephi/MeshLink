@@ -1392,6 +1392,22 @@ private fun ChatScreen(
                 items(messages, key = { it.msgId }) { row -> ChatBubble(row) }
             }
         }
+        // Files & voice notes ride LAN / Wi-Fi Direct — BLE drops big
+        // frames so the user wouldn't see a delivery. Surface a hint
+        // when the only live transport to this peer is BLE.
+        val fatPipeReady = remember(getService(), scopeId) {
+            getService()?.hasFatPipe() ?: false
+        }
+        if (kind == MeshService.SCOPE_PEER && !fatPipeReady) {
+            Text(
+                stringResource(R.string.chat_no_fat_pipe),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            )
+        }
         ChatComposer(
             value = draft,
             onValueChange = {

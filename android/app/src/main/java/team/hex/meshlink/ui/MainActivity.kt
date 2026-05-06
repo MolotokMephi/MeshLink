@@ -20,6 +20,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -70,6 +71,14 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Splash Screen API: the launcher theme is Theme.MeshLink.Splash
+        // (parent: Theme.SplashScreen). installSplashScreen() consumes
+        // that and switches us to the post-splash theme right before the
+        // first frame, so we don't see the aurora gradient flash white
+        // on cold start. On API 31+ this delegates to the system
+        // SplashScreen API; on API 26-30 it renders the legacy
+        // windowBackground splash.
+        installSplashScreen()
         // Edge-to-edge with auto status/nav bar contrast. Samsung's One UI
         // 6+ refuses to render translucent system bars unless the activity
         // opts in here — without it the app draws *behind* an opaque grey

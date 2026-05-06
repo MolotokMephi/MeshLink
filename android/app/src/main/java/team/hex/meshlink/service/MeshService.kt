@@ -223,8 +223,26 @@ class MeshService : Service() {
         router.send(MsgType.READ_RECEIPT, ct, recipientId = peerNodeId, ttl = 4)
     }
 
-    suspend fun offerFile(peerId: String, uri: Uri, displayName: String): String =
-        fileTransfer.offer(peerId, uri, displayName)
+    suspend fun offerFile(peerId: String, uri: Uri, displayName: String): String {
+        // Fire a fresh WIFI_HINT before the file actually starts streaming
+        // so peers who only hear us over BLE can race to open a fat-pipe
+        // back-channel (LAN TCP / Wi-Fi Direct) before chunks start landing
+        // on the BLE drop floor (BleTransport caps frames at 4 KiB).
+        runCatching { broadcastWifiHint() }
+        return fileTransfer.offer(peerId, uri, displayName)
+    }
+
+    /**
+     * True when at least one non-BLE transport reports a live link. Files
+     * and voice notes only flow over LAN / Wi-Fi Direct, so the chat
+     * composer queries this before letting the user attach — without it
+     * the user would tap "Send" and watch the message sit in "pending"
+     * forever on a BLE-only mesh.
+     */
+    fun hasFatPipe(): Boolean = transports.any {
+        it.name != "ble" && it.state.value == team.hex.meshlink.transport.TransportState.Running
+            && it.liveLinkCount > 0
+    }
 
     /**
      * Snapshot of every transport's runtime state so the home screen can

@@ -1,11 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Splash/launcher theme. The actual UI is rendered by Compose under
-         MeshLinkTheme, so we just need an action-bar-less host.
-         `Theme.DeviceDefault.DayNight` only exists from API 29; we use
-         the plain DeviceDefault parent here and override with DayNight in
-         values-v29 so the dark-mode wallpaper colour kicks in on current
-         hardware while older devices still resolve. -->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Runtime theme. Compose under MeshLinkTheme paints everything
+         visible; we just need an action-bar-less host that follows the
+         system day/night setting (so Samsung One UI's dark theme doesn't
+         flash a white background on cold start). -->
     <style name="Theme.MeshLink" parent="@android:style/Theme.DeviceDefault.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
@@ -13,5 +11,16 @@
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:windowTranslucentStatus">false</item>
         <item name="android:windowTranslucentNavigation">false</item>
+    </style>
+
+    <!-- Cold-start splash. Inherits the AndroidX backport so the icon
+         + brand background are presented identically on API 26-30 (legacy
+         windowBackground splash) and API 31+ (system SplashScreen). The
+         post-splash theme switches the activity to Theme.MeshLink right
+         after `installSplashScreen()` returns. -->
+    <style name="Theme.MeshLink.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#0B0C16</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.MeshLink</item>
     </style>
 </resources>

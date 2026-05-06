@@ -62,6 +62,9 @@
     <string name="peer_action_pair">Подтвердить соседа</string>
     <string name="permission_already_granted">Все разрешения уже выданы.</string>
 
+    <!-- Chat warnings -->
+    <string name="chat_no_fat_pipe">Из транспортов поднят только Bluetooth — файлы и голосовые уйдут, как только включится Wi-Fi или Wi-Fi Direct.</string>
+
     <!-- Peer detail -->
     <string name="peer_detail_last_seen">Последний раз: %1$s</string>
     <string name="peer_detail_distance">~%1$s</string>
