@@ -52,14 +52,33 @@ jobs:
           ls "${ANDROID_HOME:-/usr/local/lib/android/sdk}" || true
 
       - name: Assemble debug APK
+        id: assemble
         working-directory: android
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
         run: |
-          set -eux
+          set -eo pipefail
           chmod +x ./gradlew
           ./gradlew --version
-          ./gradlew :app:assembleDebug --stacktrace
+          ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee /tmp/gradle.log
+
+      - name: Surface failure to step summary
+        if: failure() && steps.assemble.conclusion == 'failure'
+        run: |
+          {
+            echo "# Build failure"
+            echo
+            echo "## Tail of gradle output"
+            echo '```'
+            tail -200 /tmp/gradle.log 2>/dev/null || echo "no gradle log"
+            echo '```'
+            echo
+            echo "## Compile / lint reports"
+            for f in $(find android/app/build/reports -type f \( -name "*.txt" -o -name "*.html" \) 2>/dev/null | head -10); do
+              echo "### $f"
+              echo '```'
+              head -200 "$f"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run unit tests
         working-directory: android
@@ -74,4 +93,5 @@ jobs:
           path: |
             android/app/build/outputs/apk/debug/*.apk
             android/app/build/reports/
+            /tmp/gradle.log
           if-no-files-found: ignore

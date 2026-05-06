@@ -45,20 +45,7 @@ android {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
     packaging {
-        resources.excludes += setOf(
-            "META-INF/AL2.0",
-            "META-INF/LGPL2.1",
-            "META-INF/DEPENDENCIES",
-            "META-INF/LICENSE*",
-            "META-INF/NOTICE*",
-            "META-INF/*.kotlin_module",
-        )
-    }
-    lint {
-        abortOnError = false
-        warningsAsErrors = false
-        checkReleaseBuilds = true
-        disable += setOf("MissingTranslation")
+        resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1")
     }
 }
 
