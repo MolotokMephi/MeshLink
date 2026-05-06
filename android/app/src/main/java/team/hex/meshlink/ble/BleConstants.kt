@@ -35,4 +35,13 @@ object BleConstants {
 
     const val BACKOFF_BASE_MS = 2_000L
     const val BACKOFF_MAX_MS = 60_000L
+
+    /** Heartbeat ping interval over the notify channel (kicks subscribers awake). */
+    const val KEEPALIVE_INTERVAL_MS = 15_000L
+
+    /**
+     * If we haven't seen anything from a peer for this long, treat the link
+     * as dead and recycle it. ~3× keepalive interval.
+     */
+    const val LINK_IDLE_TIMEOUT_MS = 50_000L
 }

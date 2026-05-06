@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launcher icon palette: deep aurora violet → teal so the icon
+         echoes the in-app gradient theme. -->
+    <color name="ic_launcher_bg_top">#FF243B8A</color>
+    <color name="ic_launcher_bg_mid">#FF5C2BAF</color>
+    <color name="ic_launcher_bg_bot">#FF006A60</color>
+    <color name="ic_launcher_node">#FFE9F2FF</color>
+    <color name="ic_launcher_link">#FFB6C8FF</color>
+</resources>

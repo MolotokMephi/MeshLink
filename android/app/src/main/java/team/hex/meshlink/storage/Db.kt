@@ -27,6 +27,22 @@ data class ChatMessageRow(
     @ColumnInfo(name = "ts") val ts: Long,
     /** "pending" | "sent" | "delivered" | "read" | "failed" — outgoing only. */
     @ColumnInfo(name = "delivery") val delivery: String = "delivered",
+    /** True for outgoing messages and for incoming ones whose chat has been opened. */
+    @ColumnInfo(name = "read") val read: Boolean = true,
+)
+
+/**
+ * Aggregate row used by the home "Chats" tab — one entry per conversation
+ * with the latest body preview, timestamp, and unread count.
+ */
+data class ConversationSummary(
+    @ColumnInfo(name = "scope_id") val scopeId: String,
+    @ColumnInfo(name = "scope_kind") val scopeKind: String,
+    @ColumnInfo(name = "title") val title: String,
+    @ColumnInfo(name = "last_body") val lastBody: String,
+    @ColumnInfo(name = "last_ts") val lastTs: Long,
+    @ColumnInfo(name = "last_outgoing") val lastOutgoing: Boolean,
+    @ColumnInfo(name = "unread") val unread: Int,
 )
 
 @Entity(tableName = "peers")
@@ -82,6 +98,39 @@ data class GroupRow(
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
 )
 
+/**
+ * Per-(group, sender) ratchet state for forward-secret group messages.
+ *
+ *   - `chain_key` is the current root from which the next message key is
+ *     derived; it advances on every encrypt/decrypt step.
+ *   - `counter` is the next-expected message counter for this sender
+ *     (writers compare equality; out-of-order messages whose counter is
+ *     already past get rejected; future counters fast-forward the chain).
+ *
+ * Each device persists its own row with `sender_id == self_node_id` plus
+ * one row per other group member. See [team.hex.meshlink.crypto.SenderKeys].
+ */
+@Entity(tableName = "group_sender_state", primaryKeys = ["group_id", "sender_id"])
+data class GroupSenderRow(
+    @ColumnInfo(name = "group_id") val groupId: String,
+    @ColumnInfo(name = "sender_id") val senderId: String,
+    @ColumnInfo(name = "chain_key") val chainKey: ByteArray,
+    @ColumnInfo(name = "counter") val counter: Long,
+)
+
+/**
+ * Per-peer 1:1 chain ratchet. Sending and receiving are separate chains
+ * keyed by the X25519 session key plus the lower-id node's id, so both
+ * sides agree on the seed without an extra handshake.
+ */
+@Entity(tableName = "peer_chain_state", primaryKeys = ["peer_id", "direction"])
+data class PeerChainRow(
+    @ColumnInfo(name = "peer_id") val peerId: String,
+    @ColumnInfo(name = "direction") val direction: String, // "send" | "recv"
+    @ColumnInfo(name = "chain_key") val chainKey: ByteArray,
+    @ColumnInfo(name = "counter") val counter: Long,
+)
+
 /** A file the user has either offered to send or accepted to receive. */
 @Entity(tableName = "files")
 data class FileRow(
@@ -110,6 +159,43 @@ interface ChatDao {
 
     @Query("DELETE FROM chat_messages WHERE ts < :before")
     suspend fun deleteOlderThan(before: Long)
+
+    @Query("UPDATE chat_messages SET read = 1 WHERE scope_id = :scopeId AND scope_kind = :kind AND read = 0")
+    suspend fun markScopeRead(scopeId: String, kind: String)
+
+    @Query("SELECT COUNT(*) FROM chat_messages WHERE read = 0")
+    fun streamUnreadTotal(): Flow<Int>
+
+    /**
+     * One row per conversation with the latest message preview. Joins
+     * peers/groups for a friendly title, falls back to scope id.
+     */
+    @Query("""
+        SELECT
+            m.scope_id     AS scope_id,
+            m.scope_kind   AS scope_kind,
+            COALESCE(p.name, g.name, m.scope_id) AS title,
+            m.body         AS last_body,
+            m.ts           AS last_ts,
+            m.outgoing     AS last_outgoing,
+            (SELECT COUNT(*) FROM chat_messages u
+              WHERE u.scope_id = m.scope_id
+                AND u.scope_kind = m.scope_kind
+                AND u.read = 0) AS unread
+        FROM chat_messages m
+        INNER JOIN (
+            SELECT scope_id, scope_kind, MAX(ts) AS max_ts
+            FROM chat_messages
+            GROUP BY scope_id, scope_kind
+        ) latest
+            ON latest.scope_id = m.scope_id
+           AND latest.scope_kind = m.scope_kind
+           AND latest.max_ts = m.ts
+        LEFT JOIN peers  p ON m.scope_kind = 'peer'  AND p.nodeId  = m.scope_id
+        LEFT JOIN `groups` g ON m.scope_kind = 'group' AND g.groupId = m.scope_id
+        ORDER BY m.ts DESC
+    """)
+    fun streamConversations(): Flow<List<ConversationSummary>>
 }
 
 @Dao
@@ -159,6 +245,9 @@ interface OutboxDao {
     @Query("DELETE FROM outbox WHERE acked = 1 AND created_at < :before")
     suspend fun trimAcked(before: Long)
 
+    @Query("SELECT msgId FROM outbox WHERE acked = 0 AND attempts >= :maxAttempts")
+    suspend fun exhaustedIds(maxAttempts: Int): List<String>
+
     @Query("DELETE FROM outbox WHERE attempts >= :maxAttempts")
     suspend fun dropExhausted(maxAttempts: Int)
 }
@@ -173,6 +262,30 @@ interface GroupDao {
 
     @Query("SELECT * FROM groups WHERE groupId = :id LIMIT 1")
     suspend fun byId(id: String): GroupRow?
+}
+
+@Dao
+interface GroupSenderDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: GroupSenderRow)
+
+    @Query("SELECT * FROM group_sender_state WHERE group_id = :groupId AND sender_id = :senderId LIMIT 1")
+    suspend fun get(groupId: String, senderId: String): GroupSenderRow?
+
+    @Query("DELETE FROM group_sender_state WHERE group_id = :groupId")
+    suspend fun deleteForGroup(groupId: String)
+}
+
+@Dao
+interface PeerChainDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: PeerChainRow)
+
+    @Query("SELECT * FROM peer_chain_state WHERE peer_id = :peerId AND direction = :direction LIMIT 1")
+    suspend fun get(peerId: String, direction: String): PeerChainRow?
+
+    @Query("DELETE FROM peer_chain_state WHERE peer_id = :peerId")
+    suspend fun deleteForPeer(peerId: String)
 }
 
 @Dao
@@ -198,8 +311,10 @@ interface FileDao {
         OutboxRow::class,
         GroupRow::class,
         FileRow::class,
+        GroupSenderRow::class,
+        PeerChainRow::class,
     ],
-    version = 2,
+    version = 4,
     exportSchema = false,
 )
 abstract class MeshDb : RoomDatabase() {
@@ -209,6 +324,8 @@ abstract class MeshDb : RoomDatabase() {
     abstract fun outboxDao(): OutboxDao
     abstract fun groupDao(): GroupDao
     abstract fun fileDao(): FileDao
+    abstract fun groupSenderDao(): GroupSenderDao
+    abstract fun peerChainDao(): PeerChainDao
 
     companion object {
         const val SEEN_CAP = 4096
@@ -221,9 +338,51 @@ abstract class MeshDb : RoomDatabase() {
                 MeshDb::class.java,
                 "meshlink.db"
             )
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
                 .also { instance = it }
+        }
+
+        /**
+         * v3 adds a `read` flag on chat_messages so the home screen can
+         * surface unread badges per conversation. All existing rows are
+         * marked as read so the user doesn't get a flood of notifications
+         * on first launch.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN read INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        /**
+         * v4 introduces per-sender ratchet state for groups
+         * ([GroupSenderRow]) and per-direction chain state for 1:1 chats
+         * ([PeerChainRow]). Both tables are keyed on natural composite
+         * keys; existing chats keep working until the first new message
+         * triggers chain initialization.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE group_sender_state (
+                        group_id TEXT NOT NULL,
+                        sender_id TEXT NOT NULL,
+                        chain_key BLOB NOT NULL,
+                        counter INTEGER NOT NULL,
+                        PRIMARY KEY(group_id, sender_id)
+                    )""".trimIndent()
+                )
+                db.execSQL(
+                    """CREATE TABLE peer_chain_state (
+                        peer_id TEXT NOT NULL,
+                        direction TEXT NOT NULL,
+                        chain_key BLOB NOT NULL,
+                        counter INTEGER NOT NULL,
+                        PRIMARY KEY(peer_id, direction)
+                    )""".trimIndent()
+                )
+            }
         }
 
         /**

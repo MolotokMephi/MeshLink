@@ -11,6 +11,7 @@ import team.hex.meshlink.storage.FileRow
 import team.hex.meshlink.storage.MeshDb
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -124,7 +125,13 @@ class FileTransfer(
             MsgType.FILE_OFFER -> {
                 val offer = FileOfferPayload.fromBytes(plaintext) ?: return
                 val downloads = File(context.filesDir, "downloads").apply { mkdirs() }
-                val outPath = File(downloads, offer.name).absolutePath
+                val safeName = offer.name.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+                val outFile = uniqueChild(downloads, safeName.ifBlank { "shared.bin" })
+                // Pre-allocate so chunks can be written at their idx*chunkSize
+                // offset out-of-order without corrupting the file.
+                runCatching {
+                    RandomAccessFile(outFile, "rw").use { it.setLength(offer.size) }
+                }
                 db.fileDao().upsert(FileRow(
                     transferId = offer.transferId,
                     peerId = envelope.senderId,
@@ -132,7 +139,7 @@ class FileTransfer(
                     name = offer.name,
                     size = offer.size,
                     sha256 = Crypto.unb64(offer.sha256B64),
-                    localPath = outPath,
+                    localPath = outFile.absolutePath,
                     bytesDone = 0,
                     state = "pending",
                 ))
@@ -152,9 +159,18 @@ class FileTransfer(
                 val row = db.fileDao().byId(c.transferId) ?: return
                 if (row.outgoing) return
                 val data = Crypto.unb64(c.dataB64)
-                val out = File(row.localPath)
-                FileOutputStream(out, true).use { it.write(data) }
-                db.fileDao().progress(c.transferId, row.bytesDone + data.size, "active")
+                // Write at the chunk's deterministic offset so out-of-order
+                // delivery (different relay paths, different MTU paths)
+                // doesn't corrupt the file.
+                val offset = c.idx.toLong() * CHUNK_SIZE
+                runCatching {
+                    RandomAccessFile(File(row.localPath), "rw").use { raf ->
+                        raf.seek(offset)
+                        raf.write(data)
+                    }
+                }
+                val newDone = (row.bytesDone + data.size).coerceAtMost(row.size)
+                db.fileDao().progress(c.transferId, newDone, "active")
             }
             MsgType.FILE_COMPLETE -> {
                 val c = FileCompletePayload.fromBytes(plaintext) ?: return
@@ -170,6 +186,20 @@ class FileTransfer(
                 val ok = sha.digest().contentEquals(row.sha256)
                 db.fileDao().progress(c.transferId, row.size, if (ok) "done" else "failed")
             }
+        }
+    }
+
+    private fun uniqueChild(dir: File, baseName: String): File {
+        var candidate = File(dir, baseName)
+        if (!candidate.exists()) return candidate
+        val dot = baseName.lastIndexOf('.')
+        val stem = if (dot > 0) baseName.substring(0, dot) else baseName
+        val ext = if (dot > 0) baseName.substring(dot) else ""
+        var i = 1
+        while (true) {
+            candidate = File(dir, "$stem ($i)$ext")
+            if (!candidate.exists()) return candidate
+            i++
         }
     }
 

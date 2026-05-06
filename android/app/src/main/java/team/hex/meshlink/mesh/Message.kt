@@ -33,11 +33,12 @@ data class MeshMessage(
     val signature: String = ""
 ) {
     fun canonicalBytes(): ByteArray {
-        // Sign over everything except `signature` and `relayPath` (which mutates as
-        // the message hops through the mesh).
+        // Sign over everything except the fields that mutate per relay hop:
+        // `signature` (filled in after hashing), `relayPath` (each node
+        // appends its id), and `ttl` (each node decrements it).
         val canon = json.encodeToString(
             serializer(),
-            copy(signature = "", relayPath = emptyList())
+            copy(signature = "", relayPath = emptyList(), ttl = 0)
         )
         return canon.toByteArray(Charsets.UTF_8)
     }
@@ -86,4 +87,7 @@ object MsgType {
     const val ANNOUNCE = 80           // identity advertisement (edPub + xPub)
     const val GROUP_TEXT = 90         // group ciphertext (group_id + AES-GCM)
     const val GROUP_INVITE = 91
+    const val GROUP_SENDER_KEY = 92   // 1:1 distribution of a per-sender ratchet seed
+    const val WIFI_HINT = 100         // peer advertises a TCP-reachable Wi-Fi address
+    const val VOICE_NOTE = 110        // file-transfer wrapper for short audio messages
 }

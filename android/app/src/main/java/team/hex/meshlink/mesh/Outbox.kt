@@ -94,7 +94,9 @@ class Outbox(
             ))
             router.resend(refreshed)
         }
-        // Janitor.
+        // Janitor: surface failed messages in the chat UI before deletion.
+        val exhausted = db.outboxDao().exhaustedIds(maxAttempts)
+        for (id in exhausted) db.chatDao().setDelivery(id, "failed")
         db.outboxDao().dropExhausted(maxAttempts)
         db.outboxDao().trimAcked(before = now - 24L * 3600 * 1000)
     }

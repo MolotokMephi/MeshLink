@@ -32,10 +32,33 @@ interface Transport {
     fun stop()
 
     /** Push a logical mesh frame to every reachable peer on this medium. */
-    fun broadcast(frame: ByteArray)
+    fun broadcast(frame: ByteArray) = broadcast(frame, hint = SendHint.RELIABLE)
+
+    /**
+     * Push a logical mesh frame with a delivery hint. Implementations can
+     * pick faster/cheaper modes for [SendHint.LOW_LATENCY] payloads (e.g.
+     * BLE write-without-response for chat).
+     */
+    fun broadcast(frame: ByteArray, hint: SendHint)
 
     /** Number of currently-live remote peers (for connection-cap accounting). */
     val liveLinkCount: Int
+
+    /**
+     * Human-readable explanation of the current state — primarily used
+     * when [state] is [TransportState.Failed] to tell the user *why*
+     * (e.g. "Bluetooth is off", "permission denied", "no Wi-Fi"). null
+     * means no extra context.
+     */
+    val details: String? get() = null
 }
+
+/**
+ * Per-frame quality-of-service hint:
+ *   - [RELIABLE]   default; transports use ack'd writes / stream sockets.
+ *   - [LOW_LATENCY] small chat-like frames where it's better to drop a
+ *     single message than to clog the link's write queue with retries.
+ */
+enum class SendHint { RELIABLE, LOW_LATENCY }
 
 enum class TransportState { Stopped, Starting, Running, Failed }

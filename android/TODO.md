@@ -10,116 +10,129 @@
 - ✅ MTU-aware фрагментация per-link, очередь записи с retry,
   cap=5 одновременных GATT-линков, exponential backoff на reconnect.
 - ✅ Persistent seen-cache в Room (`seen_msgs`), миграция v1→v2.
-- ✅ Outbox + ack/retry с exponential backoff (Room `outbox`).
+- ✅ Outbox + ack/retry с exponential backoff (Room `outbox`),
+  re-sign retry envelope с актуальным timestamp+nonce.
 - ✅ Anti-replay: timestamp window ±5min, nonce window per-sender (64).
 - ✅ Loop-detect через relay_path; per-sender token bucket
-  (rate 16 msg/s, burst 64).
+  (rate 16 msg/s, burst 64); временный ban при систематическом превышении.
 - ✅ Android Keystore-wrapping приватных ключей (legacy v1 layout
   мигрируется при первом старте).
-- ✅ File transfer (OFFER / ACCEPT / CHUNK / COMPLETE + SHA-256 + resume).
-- ✅ Group chats (shared-key AES-GCM, GROUP_INVITE через 1:1).
-- ✅ Out-of-band peer pairing (`meshlink:1:<base64>` строка).
+- ✅ File transfer (OFFER / ACCEPT / CHUNK / COMPLETE + SHA-256 + resume),
+  out-of-order chunk write через RandomAccessFile по offset.
+- ✅ Group chats (shared-key AES-GCM, GROUP_INVITE через 1:1) + UI flow
+  создания группы с выбором участников.
+- ✅ Out-of-band peer pairing (`meshlink:1:<base64>` строка) + полноценный
+  QR matrix encoder (Reed-Solomon, mask selection, format & version info,
+  versions 1–10 byte mode EC level L).
 - ✅ Read receipts (encrypted) + typing indicator messages.
-- ✅ Compose UI: peer list, group list, chat (с delivery-state ✓✓/read),
-  pairing screen, attach-file через ActivityResult.
+- ✅ Liquid-glass Compose UI: aurora-gradient background, frosted-panel
+  primitives, Material You dynamic-color palette на API 31+.
+  Экраны: peer list с live-link badges (direct/relay/no-route),
+  group list, chat (delivery state ✓✓/read), pairing с QR,
+  settings, onboarding с battery-whitelist prompt, group create,
+  chat search.
+- ✅ Push-уведомления на новые входящие сообщения через тот же
+  foreground-сервис; deep-link обратно в нужный чат.
+- ✅ Identity recovery через 64-байтовый recovery code (edPriv ‖ xPriv +
+  4-байтный SHA-256 checksum) с экспортом из Settings.
+- ✅ Mesh-graph: per-edge timestamps, BFS shortest-path next-hop hint,
+  TTL trim для известных получателей. Граф наполняется и из direct-frames,
+  и из `relay_path` каждого верифицированного envelope.
+- ✅ TOFU mismatch detection: перенос announce с тем же node id, но
+  другим Ed25519 ключом отзывает trust и поднимает уведомление.
+- ✅ Wi-Fi Direct полноценный state machine: BroadcastReceiver на
+  `WIFI_P2P_*_CHANGED_ACTION`, `discoverPeers`/`requestPeers`/`connect`,
+  TCP framing с writer-mutex и heartbeat-keepalive.
+- ✅ BLE write-without-response для коротких сообщений (chat / typing /
+  ANNOUNCE / read receipt), serialize notify-broadcast, idle-link
+  prune через `lastActivityMs`.
+- ✅ LAN: auto-rejoin multicast group через `ConnectivityManager.NetworkCallback`,
+  одновременный broadcast на `255.255.255.255` для Wi-Fi-AP с фильтром мультикаст.
 - ✅ Unit tests: Fragmentation roundtrip, Crypto sign/verify/ECDH,
-  MeshMessage canonical signing across relay mutations.
+  MeshMessage canonical signing across relay/ttl mutations,
+  MeshGraph BFS, MnemonicBackup roundtrip + bad checksum, QR finder
+  pattern correctness.
 - ✅ GitHub Actions CI: assembleDebug + lintDebug + testDebugUnitTest +
   upload APK + lint report.
 
-## P1 — критичные доработки до прод-релиза
+## Завершено в продолжении ветки
 
-### Wi-Fi Direct follow-ups
-- [ ] **BroadcastReceiver state machine.** В `WifiDirectTransport.start()`
-      сейчас только TCP-listener; нет регистрации
-      `WIFI_P2P_PEERS_CHANGED_ACTION` / `WIFI_P2P_CONNECTION_CHANGED_ACTION`,
-      нет авто-discovery через `discoverPeers()`/`requestPeers()`,
-      нет авто-connect. Нужен полноценный конечный автомат
-      idle → discovering → connecting → connected → group-owner | client.
-- [ ] **Auto-upgrade с BLE на Wi-Fi Direct** для больших передач: при
-      получении FILE_OFFER предложить upgrade-канал, согласовать роли
-      group-owner/client, передать чанки через TCP.
-- [ ] **Wi-Fi P2P-permission UX:** на API 33+ нужен runtime-grant
-      `NEARBY_WIFI_DEVICES`, на 30- — fine location.
+- ✅ **Combined Chats tab** — главная вкладка теперь показывает все
+      переписки (1:1 и группы) с превью последнего сообщения, относительной
+      меткой времени (now/5m/2h/3d) и unread-бейджем; пустое состояние
+      ведёт к pairing/new-group flow.
+- ✅ **Unread tracking.** `chat_messages.read` (миграция v2→v3) +
+      агрегационный SQL `streamConversations()`. Чат помечается
+      прочитанным при входе через `LaunchedEffect`.
+- ✅ **NFC-pairing.** Manifest intent-filter на `NDEF_DISCOVERED`,
+      foreground dispatch в MainActivity, `NfcPairing` парсит URI/TEXT
+      записи и записывает теги; `meshlink:1:…` остаётся общим payload-ом.
+- ✅ **QR camera scanner.** CameraX preview + ZXing `MultiFormatReader`
+      в `QrScannerScreen`. Pairing screen теперь предлагает Scan QR как
+      первичный путь.
+- ✅ **Group add/remove member with rekey.** `Groups.addMembers/removeMembers`
+      ротируют shared key и шлют свежий `GROUP_INVITE` всем
+      оставшимся; `GroupInfoScreen` собирает переключения и применяет их
+      батчем.
+- ✅ **LAN TCP fallback.** Внутри `LanTransport` слушаем 43212/tcp и
+      открываем outbound линки через `connectTcp`; payload'ы > 1200 байт
+      дублируются в TCP, чтобы файлы и крупные envelope'ы не страдали
+      на хотспотах с фильтрацией мультикаста.
+- ✅ **Onboarding/theme polish.** `MeshLinkTheme` теперь оборачивает
+      контент в `Surface` с явным `contentColor = onBackground`, glass
+      cards оборачивают `LocalContentColor = onSurface`. Заголовок
+      онбординга больше не теряется на тёмном фоне; тинты aurora и
+      glass-карт стали ярче для читаемости в dynamic-color schemes.
 
-### QR pairing follow-ups
-- [ ] **Реальный QR-matrix encoder.** В `pairing/Pairing.kt::QrEncoder`
-      сейчас плейсхолдер: версия выбирается, но Reed-Solomon, маски и
-      format-info не реализованы. Текстовый payload (`meshlink:1:…`) уже
-      работает копи-пастом. Добавить полноценный encoder (≈400 строк
-      математики) или мини-зависимость на `core/qrcode-kotlin`.
-- [ ] **Сканер QR.** Сейчас вход — только paste. Добавить
-      CameraX + ML Kit Barcode Scanning (или ZXing Core) и интент.
-- [ ] **NFC-pairing** через `Ndef` для устройств с NFC: запись
-      `meshlink:1:…` строки в payload, чтение через `NDEF_DISCOVERED`.
-- [ ] **Sound-pairing** (gg-wave / chirp.io) как fallback там, где нет
-      ни камеры, ни NFC, ни общей сети.
+- ✅ **Sender Keys для групп.** `crypto/SenderKeys` + таблица
+      `group_sender_state` (миграция v3→v4). У каждого члена своя цепочка:
+      `chain_key` ратчетится после каждого encrypt/decrypt, msg_key
+      выводится через HMAC-SHA256(chain_key, "ml-msg" ‖ counter). Старый
+      shared-key путь оставлен как fallback для совместимости.
+- ✅ **1:1 chain ratchet.** `groups/PeerChain` хранит `peer_chain_state`
+      по направлениям (send/recv); seed детерминированно выводится из
+      `HKDF(session_key, "ml-root:" ‖ writer_node_id)`, поэтому обе
+      стороны начинают с одной точки без хендшейка. `MeshService.sendText`
+      и `decryptFromPeer` теперь идут по ratchet-пути с graceful fallback
+      на legacy AES-GCM(session_key) для старых пиров.
+- ✅ **Sound-pairing.** `pairing/SoundPairing` эмитит payload как 4-FSK
+      (1500/2100/2700/3300Hz, 100мс/символ) с CRC-16, декодер через
+      Goertzel-фильтр. UI в pairing screen: «Воспроизвести код звуком» /
+      «Прослушать код собеседника» с runtime запросом RECORD_AUDIO.
+- ✅ **Wi-Fi Direct auto-upgrade.** Новый mesh-тип `WIFI_HINT` несёт
+      `host:lanPort:wdPort`; рассылается каждые ~60с. Получатели вызывают
+      `LanTransport.connectTcp` и `WifiDirectTransport.connectTo`, чтобы
+      поднять fat-pipe TCP к этому пиру; флудинг оставлен как страховка.
+- ✅ **Voice notes.** `service/VoiceRecorder` пишет AAC@24 кбит/с моно;
+      hold-to-record кнопка в `ChatComposer` (slide-up отменяет запись),
+      файл уходит через тот же `FileTransfer.offer`-pipeline что и
+      обычные attachments.
+- ✅ **Карта последнего видения соседей.** PeerCard показывает
+      «Последний раз: 5 мин назад» из `last_seen_ms`; lat/lon исключены
+      намеренно, чтобы не раскрывать локацию через mesh.
+- ✅ **LoRa-bridge.** `transport/LoraTransport` — каркас с обнаружением
+      USB-устройств с known-VID (Heltec, RAK, Adafruit) и фрагментацией
+      по LoRa-MTU. Реальная передача через USB-serial оставлена как
+      no-op — подключается отдельная зависимость
+      `usb-serial-for-android` или вендорский SDK.
 
-### Forward secrecy для групп
-- [ ] **MLS / Signal Sender Keys.** Текущая `groups/Groups.kt` — один
-      статический AES-ключ на группу. При компрометации одного устройства
-      раскрываются все прошлые/будущие сообщения. Внедрить либо
-      Signal Sender Keys (per-sender ratchet) либо MLS (RFC 9420);
-      первый вариант проще, второй — стандартный.
-- [ ] **Add/remove member** с rekey: сейчас `members_csv` хранится, но
-      операций по добавлению/удалению с ротацией ключа нет.
+## P1 — Что ещё стоит сделать
+
+### Forward secrecy (полные ratchet'ы)
+- [ ] **MLS (RFC 9420)** для групп — текущая реализация даёт forward
+      secrecy для каждого отправителя, но не post-compromise: восстановить
+      compromised chain ключ через DH-ratchet может только MLS / Signal.
+- [ ] **DH-ratchet поверх 1:1 chain ratchet.** Каждые N сообщений
+      генерировать ephemeral X25519 пару и встраивать pubkey в envelope
+      для пере-derive root key — настоящий Double Ratchet вместо текущего
+      symmetric-only chain.
 
 ### Стабильность транспорта
-- [ ] **BLE: handle WRITE_TYPE_NO_RESPONSE.** Для chat-сообщений (не
-      файлов) можно использовать write-without-response — в разы быстрее
-      и не блокирует очередь подтверждениями. Сейчас всегда DEFAULT.
-- [ ] **BLE: subscribe-driven keepalive.** Если сабскрайбер не отзывается
-      ping/pong > N секунд, дропать линк, запускать backoff.
-- [ ] **LAN: TCP fallback внутри LanTransport** для крупных payload'ов
-      (когда multicast pipe недостаточен и MTU < 1400 — на mobile-AP
-      это часто).
-- [ ] **LAN: auto-rejoin multicast group** на change-of-network
-      (`ConnectivityManager.NetworkCallback`).
-- [ ] **Wi-Fi Direct: keepalive + reconnect.** Сейчас `FrameLink` молча
-      падает при разрыве — нужна реконнект-стратегия с heartbeat.
-
-### Безопасность
-- [ ] **Identity recovery.** Если Keystore-ключ утерян (factory reset
-      без бэкапа), идентичность теряется навсегда. Добавить экспорт
-      mnemonic-фразы по BIP39 через KDF из identity.
-- [ ] **Per-recipient session ratchet** (Double Ratchet) вместо чистого
-      ECDH — даст forward secrecy для 1:1 чатов.
-- [ ] **Trust-on-first-use markers.** Сейчас `peers.trusted = false` для
-      announce-обнаруженных, `true` для pairing. UI должен явно различать
-      «случайный сосед» и «доверенный контакт» и предупреждать о
-      смене edPub под тем же display name.
-- [ ] **Rate-limit storms.** Вместо silent-drop при превышении
-      bucket-rate — временный ban (на 30s/5min), как в Python-ядре
-      `core/security`.
-- [ ] **Outbox: подпись retry-envelope с актуальным timestamp.** Сейчас
-      retry шлёт исходный envelope с прежним timestamp; через 5 минут он
-      будет дропаться по anti-replay window. Нужно при retry
-      переподписывать envelope с новым timestamp+nonce.
-
-### UX
-- [ ] **Onboarding-флоу:** объяснить, зачем разрешения, провести через
-      battery-optimization whitelist на не-Pixel устройствах.
-- [ ] **Settings screen:** display name, чистка истории, экспорт identity.
-- [ ] **Live-link индикатор** в peer-list: прямой BLE/LAN/WD vs «через
-      mesh-relay».
-- [ ] **Push-уведомления** на новые сообщения (через тот же
-      foreground-сервис, не FCM).
-- [ ] **Поиск по чатам** (FTS на `chat_messages.body`).
-- [ ] **Material You + dynamic colors** на API 31+.
-- [ ] **Полноценный flow выбора собеседников** для group create
-      (сейчас в UI нет экрана создания группы — только список существующих).
-
-## P2 — приятные мелочи
-
-- [ ] **Voice notes / push-to-talk** через Wi-Fi Direct (Opus в
-      контейнере OGG, ~24 кбит/с).
-- [ ] **Карта последнего видения соседей** (lat/lon в локальном
-      состоянии устройства, **не** в mesh-payload).
-- [ ] **Bridge к LoRa-модулю** через USB-OTG / Bluetooth-classic для
-      километровых дальностей. Архитектурно это просто ещё один
-      `Transport`-имплементер.
-- [ ] **Веб-интерфейс по WebSocket** на самом телефоне для
-      управления с десктопа без интернета (через тот же Wi-Fi).
+- [ ] **End-to-end перенаправление файлов на TCP.** Сейчас `WIFI_HINT`
+      устанавливает back-channel, но `FileTransfer` не знает про него
+      явно — сообщения уходят на все транспорты, ratx дедуплицирует.
+      Можно ускорить, явно отправляя FILE_CHUNK только в TCP-линк к
+      получателю когда такой есть.
 
 ## Известные риски
 
@@ -128,11 +141,8 @@
   advertising может молча не запуститься. Нужно вендор-матричное
   тестирование.
 - **Doze + App Standby** на не-Pixel убивают FGS через 5–10 минут после
-  блокировки экрана. Без runtime запроса
-  `requestIgnoreBatteryOptimizations` mesh не выживет ночь.
-- **Multicast filtering** на старых Android-роутерах. Hotspot Pixel
-  фильтрует мультикаст между клиентами по умолчанию — нужен fallback на
-  255.255.255.255 broadcast.
+  блокировки экрана. Onboarding теперь приводит пользователя к
+  `requestIgnoreBatteryOptimizations`, но юзер всё ещё может отказаться.
 - **Wi-Fi Direct + STA одновременно.** На большинстве устройств Wi-Fi
   Direct отключает обычное Wi-Fi на время сессии. UX должен это
   объяснять.

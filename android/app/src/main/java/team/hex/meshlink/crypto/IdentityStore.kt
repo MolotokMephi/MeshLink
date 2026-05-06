@@ -64,6 +64,16 @@ class IdentityStore(ctx: Context) {
         prefs.edit().putString(K_NAME, name).apply()
     }
 
+    fun useDynamicColor(): Boolean = prefs.getBoolean(K_DYNAMIC_COLOR, true)
+    fun setUseDynamicColor(enabled: Boolean) {
+        prefs.edit().putBoolean(K_DYNAMIC_COLOR, enabled).apply()
+    }
+
+    fun onboardingDone(): Boolean = prefs.getBoolean(K_ONBOARDING_DONE, false)
+    fun setOnboardingDone() {
+        prefs.edit().putBoolean(K_ONBOARDING_DONE, true).apply()
+    }
+
     private fun persist(id: Crypto.IdentityKeys) {
         val combined = id.edPriv + id.xPriv
         val wrapped = wrapPriv(combined)
@@ -125,6 +135,8 @@ class IdentityStore(ctx: Context) {
         private const val K_X_PUB = "x_pub"
         private const val K_PRIV_BLOB = "priv_blob"
         private const val K_NAME = "display_name"
+        private const val K_DYNAMIC_COLOR = "dynamic_color"
+        private const val K_ONBOARDING_DONE = "onboarding_done"
         private const val KEYSTORE_ALIAS = "meshlink_identity_wrap"
     }
 }

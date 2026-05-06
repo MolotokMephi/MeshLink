@@ -206,3 +206,14 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 data/
+
+# Android / Gradle
+.gradle/
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+*.iml
+*.apk
+*.aab
+captures/
