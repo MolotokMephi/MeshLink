@@ -42,9 +42,9 @@ import team.hex.meshlink.storage.MeshDb
 import team.hex.meshlink.storage.PeerRow
 import team.hex.meshlink.storage.RoomSeenStore
 import team.hex.meshlink.transport.LanTransport
-import team.hex.meshlink.transport.LoraTransport
 import team.hex.meshlink.transport.SendHint
 import team.hex.meshlink.transport.Transport
+import team.hex.meshlink.transport.WifiAwareTransport
 import team.hex.meshlink.transport.WifiDirectTransport
 
 /**
@@ -106,7 +106,7 @@ class MeshService : Service() {
             BleTransport(this),
             LanTransport(this),
             WifiDirectTransport(this),
-            LoraTransport(this),
+            WifiAwareTransport(this),
         )
 
         pumpJob = scope.launch {
@@ -123,10 +123,15 @@ class MeshService : Service() {
             launch { collectAppInbox() }
             launch { collectPeers() }
             launch { collectIdentityConflicts() }
+            // Transports must start AFTER the incoming collectors are wired
+            // up — `incoming` is a SharedFlow with no replay, so frames
+            // emitted before subscription land in the void. On startup that
+            // tended to lose the very first ANNOUNCE from peers already in
+            // range, leaving the local mesh "blind" until the next 15s tick.
+            for (t in transports) runCatching { t.start() }
             launch { announceLoop() }
         }
 
-        for (t in transports) t.start()
         outbox.start()
     }
 
@@ -220,8 +225,26 @@ class MeshService : Service() {
         router.send(MsgType.READ_RECEIPT, ct, recipientId = peerNodeId, ttl = 4)
     }
 
-    suspend fun offerFile(peerId: String, uri: Uri, displayName: String): String =
-        fileTransfer.offer(peerId, uri, displayName)
+    suspend fun offerFile(peerId: String, uri: Uri, displayName: String): String {
+        // Fire a fresh WIFI_HINT before the file actually starts streaming
+        // so peers who only hear us over BLE can race to open a fat-pipe
+        // back-channel (LAN TCP / Wi-Fi Direct) before chunks start landing
+        // on the BLE drop floor (BleTransport caps frames at 4 KiB).
+        runCatching { broadcastWifiHint() }
+        return fileTransfer.offer(peerId, uri, displayName)
+    }
+
+    /**
+     * True when at least one non-BLE transport reports a live link. Files
+     * and voice notes only flow over LAN / Wi-Fi Direct, so the chat
+     * composer queries this before letting the user attach — without it
+     * the user would tap "Send" and watch the message sit in "pending"
+     * forever on a BLE-only mesh.
+     */
+    fun hasFatPipe(): Boolean = transports.any {
+        it.name != "ble" && it.state.value == team.hex.meshlink.transport.TransportState.Running
+            && it.liveLinkCount > 0
+    }
 
     /**
      * Snapshot of every transport's runtime state so the home screen can
@@ -427,12 +450,18 @@ class MeshService : Service() {
 
     private suspend fun collectPeers() {
         router.peerEvents.collect { p: PeerIdentity ->
+            // Preserve the existing `trusted` flag — `upsert` would
+            // otherwise stomp the pairing state every time a new
+            // ANNOUNCE arrives, which downgraded already-paired peers
+            // back to "discovered" within seconds.
+            val existing = db.peerDao().byId(p.nodeId)
             db.peerDao().upsert(PeerRow(
                 nodeId = p.nodeId,
                 name = p.displayName,
                 edPub = p.edPub,
                 xPub = p.xPub,
                 lastSeenMs = p.lastSeenMs,
+                trusted = existing?.trusted ?: false,
             ))
         }
     }

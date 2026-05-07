@@ -16,8 +16,11 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -68,6 +71,22 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Splash Screen API: the launcher theme is Theme.MeshLink.Splash
+        // (parent: Theme.SplashScreen). installSplashScreen() consumes
+        // that and switches us to the post-splash theme right before the
+        // first frame, so we don't see the aurora gradient flash white
+        // on cold start. On API 31+ this delegates to the system
+        // SplashScreen API; on API 26-30 it renders the legacy
+        // windowBackground splash.
+        installSplashScreen()
+        // Edge-to-edge with auto status/nav bar contrast. Samsung's One UI
+        // 6+ refuses to render translucent system bars unless the activity
+        // opts in here — without it the app draws *behind* an opaque grey
+        // strip the OS overlays on top of our aurora gradient.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(0, 0),
+            navigationBarStyle = SystemBarStyle.auto(0, 0),
+        )
         super.onCreate(savedInstanceState)
         readDeepLinkExtras(intent)
         consumeNfcIntent(intent)
@@ -79,8 +98,12 @@ class MainActivity : ComponentActivity() {
                 if (!onboardingDone.value) {
                     OnboardingScreen(
                         modifier = Modifier.fillMaxSize(),
-                        onDone = {
+                        onDone = { nickname ->
+                            // Onboarding has already persisted the name via
+                            // identityStore.setDisplayName; nudge the service
+                            // so the next ANNOUNCE picks it up.
                             app.identityStore.setOnboardingDone()
+                            meshService?.setDisplayName(nickname)
                             onboardingDone.value = true
                             ensurePermissionsAndStart()
                         },
@@ -158,11 +181,41 @@ class MainActivity : ComponentActivity() {
 
     /** Public hook for the UI: re-prompt for whatever's still missing. */
     fun requestMeshPermissions() {
+        val hadAllAlready = missingMeshPermissions().isEmpty()
         ensurePermissionsAndStart()
         // Even if the OS perms are already granted, transports may have
         // started in Failed state earlier (Bluetooth off at the time, etc.).
         // Kick them to retry now that the user has come back to fix things.
         meshService?.restartTransports()
+        if (hadAllAlready) {
+            // Without feedback the button looks dead — surface a toast so
+            // the user knows the tap was actually consumed.
+            android.widget.Toast.makeText(
+                this,
+                getString(team.hex.meshlink.R.string.permission_already_granted),
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    private fun missingMeshPermissions(): List<String> {
+        val needed = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            needed += listOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        } else {
+            needed += Manifest.permission.ACCESS_FINE_LOCATION
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            needed += Manifest.permission.POST_NOTIFICATIONS
+            needed += Manifest.permission.NEARBY_WIFI_DEVICES
+        }
+        return needed.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
     }
 
     /**
@@ -180,23 +233,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun ensurePermissionsAndStart() {
-        val needed = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            needed += listOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_ADVERTISE,
-                Manifest.permission.BLUETOOTH_CONNECT,
-            )
-        } else {
-            needed += Manifest.permission.ACCESS_FINE_LOCATION
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            needed += Manifest.permission.POST_NOTIFICATIONS
-            needed += Manifest.permission.NEARBY_WIFI_DEVICES
-        }
-        val missing = needed.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
+        val missing = missingMeshPermissions()
         if (missing.isEmpty()) startServiceAndBind()
         else permissionRequest.launch(missing.toTypedArray())
     }

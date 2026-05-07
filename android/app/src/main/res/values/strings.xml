@@ -42,14 +42,29 @@
     <string name="action_voice_record">Hold to record</string>
     <string name="action_grant_microphone">Grant microphone access</string>
 
-    <!-- Sound pairing -->
-    <string name="sound_pairing_title">Sound pairing</string>
-    <string name="sound_pairing_emit">Play your code aloud</string>
-    <string name="sound_pairing_listen">Listen for a peer\'s code</string>
-    <string name="sound_pairing_listening">Listening…</string>
-    <string name="sound_pairing_emitting">Emitting…</string>
-    <string name="sound_pairing_done">Decoded successfully</string>
-    <string name="sound_pairing_failed">Couldn\'t decode the audio. Try again closer to the speaker.</string>
+    <!-- Nickname picker (first run) -->
+    <string name="nickname_title">Pick a nickname</string>
+    <string name="nickname_body">This is what other devices will see when you appear in their nearby list. You can change it later from Settings.</string>
+    <string name="nickname_random">Roll a new one</string>
+    <string name="placeholder_nickname">Your nickname</string>
+
+    <!-- NFC pairing -->
+    <string name="pairing_nfc_title">NFC pairing</string>
+    <string name="pairing_nfc_body">Bring this device close to a peer running MeshLink to exchange identities.</string>
+    <string name="pairing_nfc_unsupported">This device has no NFC; use QR or paste the code.</string>
+    <string name="pairing_nfc_disabled">NFC is off in system settings.</string>
+    <string name="pairing_nfc_open_settings">Open NFC settings</string>
+
+    <!-- Peer needs pairing -->
+    <string name="peer_needs_pairing_title">Pair to chat</string>
+    <string name="peer_needs_pairing_body">%1$s is nearby but you haven\'t verified each other yet. Exchange a pairing code so messages can flow end-to-end encrypted.</string>
+    <string name="peer_section_paired">Paired peers</string>
+    <string name="peer_section_discovered">Discovered (not paired)</string>
+    <string name="peer_action_pair">Pair this peer</string>
+    <string name="permission_already_granted">All permissions are already granted.</string>
+
+    <!-- Chat warnings -->
+    <string name="chat_no_fat_pipe">Only Bluetooth link is live — files and voice notes will queue until Wi-Fi or Wi-Fi Direct connects.</string>
 
     <!-- Peer detail -->
     <string name="peer_detail_last_seen">Last seen %1$s</string>
@@ -64,7 +79,7 @@
     <string name="transport_ble">Bluetooth LE</string>
     <string name="transport_lan">Wi-Fi LAN</string>
     <string name="transport_wifi_direct">Wi-Fi Direct</string>
-    <string name="transport_lora">LoRa</string>
+    <string name="transport_wifi_aware">Wi-Fi Aware</string>
     <string name="transport_unknown">Unknown</string>
     <string name="transport_state_running">on</string>
     <string name="transport_state_starting">starting</string>
