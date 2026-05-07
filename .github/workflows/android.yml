@@ -1,8 +1,10 @@
 name: Android
 
+# One trigger pair, deduped via concurrency: branches with an open PR
+# only run once (the pull_request event), main pushes still build.
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main]
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
@@ -11,18 +13,16 @@ on:
       - "android/**"
       - ".github/workflows/android.yml"
 
+# Cancel earlier runs of the same workflow on the same ref. Pushing
+# multiple commits in quick succession only keeps the newest run alive.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
   issues: write
-
-# `actions/cache` and `actions/upload-artifact` still ship as Node 20
-# JavaScript actions; GitHub started warning that the toolchain is
-# deprecated and will be force-switched to Node 24 in June 2026. Opt
-# in early so the runner picks Node 24 immediately and the deprecation
-# warning stops appearing.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build:
@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -41,7 +41,7 @@ jobs:
           java-version: "17"
 
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.gradle/caches
@@ -85,8 +85,6 @@ jobs:
             echo '```'
           } > /tmp/summary.md
           cat /tmp/summary.md >> "$GITHUB_STEP_SUMMARY" || true
-          # Post the failure summary as a PR comment so we can read it
-          # without admin auth on the action logs.
           if [ -n "${PR_NUMBER:-}" ]; then
             jq -n --arg body "$(cat /tmp/summary.md)" '{body: $body}' > /tmp/comment.json
             curl -sS -X POST \
@@ -104,7 +102,7 @@ jobs:
 
       - name: Upload APK
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: meshlink-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
